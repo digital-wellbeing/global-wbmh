@@ -1,0 +1,1055 @@
+---
+title: "Online analysis supplement"
+description: |
+  A global study of adolescents’ digital technology adoption and its associations with well-being and mental health
+author:
+  - name: Matti Vuorre
+    url: https://vuorre.netlify.app
+    affiliation: Oxford Internet Institute
+    affiliation_url: https://www.oii.ox.ac.uk/people/matti-vuorre/
+date: "`r Sys.Date()`"
+output:
+  distill::distill_article:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    fig_width: 8
+    fig_height: 6
+    fig_retina: 2
+    dev: "ragg_png"
+    code_folding: true
+---
+
+## Preface
+
+This document details the analyses supporting *A global study of adolescents’ digital technology adoption and its associations with well-being and mental health* (Vuorre & Prybylski, in preparation).
+
+We downloaded the relevant data from sources to data-raw. We cannot share the data here but indicate below how and when each data table was obtained. 
+
+## Settings
+
+We first load the required R packages and set some options for the resulting document.
+
+```{r settings}
+# Packages
+library(readxl)
+library(brms)
+library(ragg)
+library(scales)
+library(ggh4x)
+library(tidybayes)
+library(ggdist)
+library(parameters)
+library(countrycode)
+library(multidplyr)
+library(lme4)
+library(emmeans)
+library(plotly)
+library(knitr)
+library(patchwork)
+library(bayestestR)
+library(lubridate)
+library(haven)
+library(janitor)
+library(broom)
+library(kableExtra)
+library(ggbeeswarm)
+library(ggstance)
+library(sysfonts)
+library(tidyverse)
+
+# Knitr options
+opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  cache = TRUE,
+  error = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.retina = 2
+)
+
+# Plotting theme
+Font <- "Titillium Web"
+if (!(Font %in% font_families())) font_add_google(Font, Font)
+theme_set(
+  theme_linedraw(
+    base_size = 12, 
+    base_family = Font
+  ) +
+    theme(
+      panel.grid = element_blank(),
+      strip.text = element_text(margin = margin(4,4,4,4, "pt"))
+    )
+)
+
+# MCMC settings
+options(brms.backend = "cmdstanr")
+# Run this to delete fitted models and refit
+# unlink(list.files(pattern = "brm-.*\\.rds"))
+
+# parallel computations
+MAX_CORES <- as.numeric(Sys.getenv("MAX_CORES"))
+if (is.na(MAX_CORES)) MAX_CORES <- parallel::detectCores(logical = FALSE)
+cluster <- new_cluster(MAX_CORES)
+cluster_library(cluster, c("lme4", "dplyr", "stringr"))
+
+# Create directory for intermediate files
+dir.create("output", FALSE)
+```
+
+## Data cleaning
+
+### ITU
+
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/PercentIndividualsUsingInternet.xlsx>
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx>
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx>
+
+```{r}
+# Read and reshape fixed broadband data
+itu_fixed <- read_excel(
+  "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx", 
+  sheet = 2,
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("Year", "Variable")) %>% 
+  pivot_wider(names_from = Variable) %>% 
+  mutate(value = as.numeric(value))
+
+# Read and reshape mobile broadband data
+itu_mobile <- read_excel(
+  "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx", 
+  sheet = 2,
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("Year", "Variable")) %>% 
+  pivot_wider(names_from = Variable) %>% 
+  mutate(value = as.numeric(value))
+
+# Percent using internet
+itu_percent <- read_excel(
+  "data-raw/ITU/PercentIndividualsUsingInternet.xlsx",
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("Year", "Variable")) %>% 
+  pivot_wider(names_from = Variable) %>% 
+  mutate(value = as.numeric(value))
+
+# Merge to one table in wide format (oldest on left to include all years)
+itu <- left_join(
+  select(itu_percent, Country, Year, Internet = value),
+  select(itu_fixed, Country, Year, Fixed = value)
+) %>% 
+  left_join(
+    select(itu_mobile, Country, Year, Mobile = value)
+  ) %>% 
+  mutate(across(-Country, as.numeric))
+
+# values (1-100) to proportions (0-1)
+itu <- itu %>% 
+  mutate(across(c(Fixed, Mobile, Internet), function(x) x/100))
+
+# Standardise country names
+# This drops six small regions not recognised by countryname()
+itu <- itu %>% 
+  mutate(Country = countryname(Country)) %>% 
+  drop_na(Country)
+
+# Drop tables
+rm(itu_fixed, itu_mobile, itu_percent)
+```
+
+Remove countries with no internet data
+
+```{r}
+itu_countries_missing <- itu %>% 
+  group_by(Country) %>% 
+  summarise(
+    years = n(), 
+    missing_fixed = sum(is.na(Fixed)),
+    missing_mobile = sum(is.na(Mobile)),
+    missing_internet = sum(is.na(Internet))
+  ) %>% 
+  filter(
+    missing_fixed == years | 
+      missing_mobile == years |
+      missing_internet == years
+  )
+itu_countries_missing <- itu_countries_missing %>% 
+  filter(
+    missing_fixed==years & 
+      missing_mobile==years & missing_internet==years
+  ) %>% 
+  select(Country)
+itu <- anti_join(itu, itu_countries_missing)
+```
+
+Missing values
+
+```{r}
+# Calculate numbers of missing values for fixed (2004-) and mobile (2007-)
+bind_rows(
+  select(itu, Internet) %>% 
+    naniar::miss_var_summary(),
+  filter(itu, Year >= 2004) %>% 
+    select(Fixed) %>% 
+    naniar::miss_var_summary(),
+  filter(itu, Year >= 2007) %>% 
+    select(Mobile) %>% 
+    naniar::miss_var_summary()
+) %>% 
+  mutate(pct_miss = percent(pct_miss/100)) %>% 
+  kbl(caption = "ITU Missingness") %>% 
+  kable_styling(full_width = FALSE)
+```
+
+Impute missing values. We first replace missing initial values with zeros, assuming that they were not logged because practically zero. Then proceed with linear interpolation from there.
+
+```{r}
+library(imputeTS)
+
+itu <- itu %>% 
+  group_by(Country) %>% 
+  # If first value is missing, replace with zero
+  mutate(
+    i = 1:n(),
+    across(
+      c(Internet, Fixed, Mobile), 
+      .fns = list(
+        i = possibly(function(x) if_else(is.na(x) & i==1, 0, x), otherwise = NaN)
+      )
+    )
+  ) %>% 
+  # Linear interpolation
+  mutate(
+    across(
+      c(Internet_i, Fixed_i, Mobile_i), 
+      possibly(function(x) na_interpolation(x), otherwise = NaN)
+    )
+  ) %>% 
+  # Remove variables before they existed
+  mutate(
+    Fixed_i = if_else(Year < 2004, NaN, Fixed_i),
+    Mobile_i = if_else(Year < 2007, NaN, Mobile_i)
+  ) %>% 
+  # Remove unnecessary index variable
+  select(-i) %>% 
+  ungroup()
+
+# Don't impute observations forward (unless they are zeroes in the beginning)
+itu <- itu %>% 
+  mutate(
+    across(
+      ends_with("_i"), 
+      ~if_else(.x == lag(.x) & .x!=0, NaN, .x)
+    )
+  )
+
+# Examine output
+itu <- itu %>% 
+  select(
+    Country, Year, 
+    starts_with("Internet"),
+    starts_with("Fixed"),
+    starts_with("Mobile")
+  )
+# itu %>% 
+#   mutate(across(-c(Country, Year), ~percent(.x, .001))) %>% 
+#   View
+
+# Replace old variables with imputed
+itu <- itu %>% 
+  select(-c(Internet, Fixed, Mobile)) %>% 
+  rename_with(~str_replace(.x, "_i", ""))
+```
+
+### GBD
+
+The Global Burden of Disease data CSVs were downloaded from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02.
+
+```{r gbd-data-clean}
+# Load data files and merge to one table
+# We need names and IDs because there are two Georgias
+gbd <- list.files(
+  "data-raw/GBD/gbd-2021-11-02/", 
+  pattern = ".zip", full.names = TRUE, recursive = TRUE
+) %>% 
+  read_csv()
+
+# Cleaning
+
+# prevalence (total number of cases)
+# "Rate": Total cases per 100,000 population
+# We convert this to a percentage
+distinct(gbd, measure, metric)
+gbd <- select(gbd, -metric, -measure)
+gbd <- gbd %>% 
+  mutate(across(c(val, upper, lower), ~.x/1000))
+
+# Clean cause names
+distinct(gbd, cause)
+gbd <- gbd %>% 
+  mutate(
+    cause = case_when(
+      cause == "Anxiety disorders" ~ "Anxiety",
+      cause == "Depressive disorders" ~ "Depression",
+      cause == "Self-harm" ~ "Self-harm"
+    )
+  )
+
+# Harmonise names with other datasets and capitalize
+gbd <- gbd %>% 
+  rename(
+    Country = location,
+    Year = year,
+    Sex = sex,
+    Age = age,
+    Cause = cause
+  )
+
+# Harmonise country names
+# Check where new name doesn't match with proposed new name
+# gbd %>%
+#   distinct(Country) %>%
+#   mutate(Country2 = countryname(Country)) %>%
+#   filter(Country!=Country2 | is.na(Country2)) %>%
+#   arrange(Country) %>%
+#   View()
+# Replace old with new standard name, drop where new name doesn't exist
+gbd <- gbd %>% 
+  mutate(Country = countryname(Country)) %>% 
+  drop_na(Country)
+```
+
+### World bank
+
+```{r}
+wb <- read_csv(
+  "data-raw/world-bank/population/API_SP.POP.TOTL_DS2_en_csv_v2_2163507.csv", 
+  skip = 3
+)
+wb <- wb %>% 
+  select(Country = `Country Name`, `2000`:`2019`) %>%
+  pivot_longer(-Country, names_to = "Year", values_to = "Pop") %>% 
+  mutate(Year = as.numeric(Year))
+
+wb <- wb %>% 
+  mutate(Country = countryname(Country)) %>% 
+  drop_na(Country)
+```
+
+### GLOBE Regions
+
+We group the countries into GLOBE regions.
+
+```{r}
+regions <- read_csv(
+  "data-raw/Regions/GLOBE-regions-from-Jebb-et-al-2020.csv"
+) %>% 
+  # Jebb et al used * to indicate deviance from GLOBE, remove
+  mutate(Country = str_remove_all(Country, "\\*")) %>% 
+  # Standardize country names
+  # This drops Nagorno-Karabakh Republic
+  mutate(Country = countryname(Country)) %>% 
+  drop_na(Country)
+
+distinct(itu, Country)
+distinct(regions, Region)
+
+# ITU countries not present in region data
+filter(
+  distinct(itu, Country), 
+  !(Country %in% unique(regions$Country))
+) %>% 
+  arrange(Country) %>% 
+  write_csv("data-raw/Regions/ITU-countries-without-region.csv")
+
+# I then filled missing regions in Jebb et al and extended GLOBE referenced therein
+regions <- read_csv(
+  "data-raw/Regions/ITU-countries-without-region-filled.csv"
+) %>% 
+  select(Country, Region) %>% 
+  bind_rows(regions) %>% 
+  drop_na(Region)
+
+# GBD countries not present in region data
+filter(
+  distinct(gbd, Country),
+  !(Country %in% unique(regions$Country))
+) %>% 
+  arrange(Country) %>% 
+  write_csv("data-raw/Regions/GBD-countries-without-region.csv")
+
+# Load in above filled with regions
+
+
+# Shorter name for plots
+regions <- regions %>% 
+  mutate(Region = if_else(Region=="Sub-Sahara Africa", "Africa", Region))
+
+# Reorder labels
+regions <- regions %>% 
+  mutate(
+    Region = factor(
+      Region,
+      levels = c(
+        "Africa", "Latin America", "Anglo", "Arab", 
+        "Confucian Asia", "Southern Asia", "Eastern Europe", 
+        "Germanic Europe", "Latin Europe", "Nordic Europe"
+      )
+    )
+  )
+
+# Format labels to use line breaks instead of spaces
+levels(regions$Region) <- str_replace_all(levels(regions$Region), " ", "\n")
+
+# Remove duplicated countries
+regions %>% 
+  count(Country, sort = TRUE)
+regions <- distinct(regions)
+
+# We then use these regions
+itu <- itu %>% 
+  left_join(regions)
+```
+
+
+## Complete study dataset
+
+We end up with a dataset that has predictors (internet access) at the level of country and year. Outcomes are also at the level of country and year, but additionally vary by sex and age group. 
+
+```{r}
+# For models, we rescale year; centred at 2013 and one unit indicates 2007 to 2019
+itu <- itu %>% 
+  mutate(Time = (Year - 2013) / 12)
+
+# Create predictor, lagged and centered on 2013
+itu <- itu %>% 
+  arrange(Country, Year) %>% 
+  group_by(Country) %>% 
+  mutate(Internet1 = lag(Internet, 1)) %>% 
+  mutate(Internet1 = Internet1 - Internet1[Year==2013]) %>%
+  ungroup()
+
+# Merge data sets
+d <- left_join(itu, gbd)
+
+# What to do with countries with no outcomes--drop
+d <- d %>% 
+  drop_na(Cause)
+
+# Contrast code sex
+d$Sex <- factor(d$Sex)
+contrasts(d$Sex) <- c(-.5, .5)
+```
+
+We also save a synthetic version of this dataset to better enable others to reproduce our analytical procedures:
+
+```{r synth-data-create}
+
+```
+
+
+## Describe
+
+### Internet use trends
+
+```{r}
+# Mean users in first and last year
+itu %>% 
+  filter(Year %in% c(2000, 2020)) %>% 
+  group_by(Year) %>% 
+  summarise(mean(Internet, na.rm = TRUE))
+# Regions
+itu %>% 
+  filter(Year == 2020) %>% 
+  group_by(Region, Year) %>% 
+  summarise(m = mean(Internet, na.rm = TRUE)) %>% 
+  arrange(m)
+itu %>% drop_na(Internet) %>% {length(unique(.$Country))}
+```
+
+
+```{r}
+# Plot predictors from their own table--values are repeated in data that includes outcomes due to age and sex groups for each year and country
+p_itu <- itu %>% 
+  mutate(Year = make_date(Year)) %>% 
+  # Do something about countries with no region if they have outcome data
+  drop_na(Region) %>% 
+  pivot_longer(c(Fixed, Mobile, Internet), names_to = "Type") %>% 
+  mutate(Type = factor(Type, levels = c("Internet", "Fixed", "Mobile"))) %>% 
+  ggplot(
+    aes(
+      x = Year, 
+      y = value, 
+      group = interaction(Type, Country)
+    )
+  ) +
+  coord_cartesian(ylim = c(0, 1.00)) +
+  scale_y_continuous(
+    "Internet users (or subscriptions) / population",
+    breaks = c(0, .25, .5, .75, 1),
+    labels = percent,
+    expand = expansion(c(0.02, 0.1))
+  ) +
+  scale_x_date(
+    breaks = breaks_width("5 years"),
+    labels = label_date("'%y")
+  ) +
+  geom_line(size = .25, col = "dodgerblue4") +
+  facet_grid(Type~Region) +
+  theme(legend.position = "none")
+agg_png("output/Fig-ITU.png", height = 1200, width = 3200, res = 300)
+p_itu
+dev.off()
+agg_png("output/Fig-ITU-internet.png", height = 1200, width = 3200, res = 300)
+p_itu %+% 
+  (filter(p_itu$data, Type == "Internet") %>% 
+     mutate(Region = str_replace(Region, "\n", " "))) + 
+  scale_y_continuous(
+    "Internet users / population",
+    breaks = c(0, .25, .5, .75, 1),
+    labels = percent,
+    expand = expansion(c(0.02, 0.1))
+  ) +
+  facet_wrap("Region", nrow = 2)
+dev.off()
+```
+
+### Mental health
+
+```{r}
+d_young <- d %>% 
+  drop_na(Region) %>% 
+  filter(Age %in% c("10 to 14", "15 to 19", "20 to 24"))
+  
+pa <- d_young %>% 
+  ggplot(aes(Year, val, group = Country, col = Region)) +
+  scale_y_continuous(
+    "Rate in 100 people",
+    breaks = pretty_breaks()
+  ) +
+  scale_x_continuous(
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20")
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .4) +
+  facet_grid(Cause~Region, scales = "free_y") +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+pb <- d_young %>% 
+  ggplot(aes(Year, val, col = Age, lty = Sex)) +
+  scale_color_brewer(palette = "Dark2") +
+  scale_y_continuous(
+    "Rate in 100 people",
+    breaks = pretty_breaks()
+  ) +
+  scale_x_continuous(
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20")
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .5) +
+  facet_grid(Cause~Region, scales = "free_y")
+
+p_gbd <- (pa / pb) +
+  plot_annotation(tag_levels = "A")
+
+p_gbd
+
+ggsave(
+  "output/Fig-GBD.png", 
+  device = agg_png,
+  height = 2400, width = 3600, res = 300, units = "px"
+)
+```
+
+## Model 1: Temporal trends
+
+We then model the mental health and well-being outcomes over time allowing for heterogeneity across locations and demographic groups.
+
+### GBD lm
+
+Estimate OLS for each cause for country-sex-age specific estimates
+
+```{r fit-gbd-time-lm}
+file_path <- "output/lm-gbd-time.rds"
+if (!file.exists(file_path)) {
+  fits_lm <- d_young %>% 
+    group_by(Cause) %>% 
+    partition(cluster) %>% 
+    summarise(
+      fit = list(
+        lm(
+          val ~ 0 + Country:Sex:Age + Time:Country:Sex:Age,
+          data = cur_data_all()
+        )
+      )
+    ) %>% 
+    collect() %>% 
+    ungroup()
+  write_rds(fits_lm, file_path)
+} else {
+  fits_lm <- read_rds(file_path)
+}
+```
+
+```{r}
+tidy(fits_lm$fit[[1]])
+# Get country-sex-age specific parameters
+fits_lm %>% 
+  mutate(out = map(fit, tidy))
+```
+
+### GBD lme4
+
+```{r fit-gbd-time-lmer}
+# Fit GBD time lmer models
+file_path <- "output/lme-gbd-time.rds"
+if (!file.exists(file_path)) {
+  fits_lme <- d_young %>% 
+    group_by(Cause) %>% 
+    partition(cluster) %>% 
+    summarise(
+      fit = list(
+        lmer(
+          val ~ 0 + Sex:Age + Time:Sex:Age + 
+            (0 + Sex:Age + Time:Sex:Age | Region) +
+            (0 + Sex:Age + Time:Sex:Age | Country),
+          data = cur_data_all()
+        )
+      )
+    ) %>% 
+    collect() %>% 
+    ungroup()
+  write_rds(fits_lme, file_path)
+} else {
+  fits_lme <- read_rds(file_path)
+}
+```
+
+```{r}
+# lmer parameters
+```
+
+We want to visualise cluster-specific coefficients, but this is hard with lme4. Attempt
+
+```{r}
+# Get country-, region-, and age-specific parameters
+
+# Create scatterplots
+```
+
+### GBD brms
+
+Shall we fit multiple times: First without interaction with age, gender, then see if those matter?
+
+```{r fit-gbd-time-brms}
+fit_empty <- brm(
+  val ~ Time * Sex + 
+    (1 + Time * Sex | Country) +
+    (1 + Time * Sex | Region) +
+    (1 + Time * Sex | Age),
+  data = filter(d, Cause == "Depression"),
+  file = "output/brm-gbd-time-empty",
+  chains = 0,
+  threads = 3,
+)
+
+# cluster_copy(cluster, "fit_empty")
+fits_brm <- d %>% 
+  group_by(Cause) %>% 
+  summarise(
+    fit = list(
+      update(
+        fit_empty,
+        newdata = cur_data_all(),
+        chains = 4,
+        cores = 4,
+        iter = 1600,
+        warmup = 800,
+        refresh = 10,
+        threads = 3,
+        file = str_glue("output/brm-gbd-time-{cur_group()}")
+      )
+    )
+  ) %>%
+  ungroup()
+```
+
+Fixed effects
+
+```{r}
+tmp <- fits_brm %>% 
+  mutate(
+    parameters = map(
+      fit,
+      ~posterior_summary(., pars = c("b_", "sd_", "cor_"))
+    )
+  )
+tmp %>% 
+  select(-fit) %>% 
+  unnest(parameters) %>% 
+  filter(!str_detect(Parameter, "cor_"), Parameter != "sigma") %>% 
+  separate(
+    Parameter, c("Parameter", "Group", "Term"), 
+    sep = "_", 
+    extra = "merge"
+  ) %>%
+  mutate(Term = coalesce(Term, Group)) %>% 
+  mutate(Group = if_else(Parameter == "b", "", Group)) %>% 
+  mutate(Term = str_remove(Term, "_")) %>% 
+  ggplot(aes(Median, Term, color = Cause)) +
+  geom_vline(xintercept = 0, size = .2, lty = 2) +
+  geom_pointrangeh(
+    aes(xmin = CI_low, xmax = CI_high),
+    position = position_dodgev(.4)
+  ) +
+  facet_nested(~ Parameter + Group)
+
+# Fixed-effects plot
+fixef_draws <- fits_brm %>% 
+  mutate(
+    samples = map(
+      fit, 
+      ~emtrends(.x, "Sex", "Time") %>% 
+        gather_emmeans_draws()
+    )
+  ) %>% 
+  select(-fit)
+fixef_draws
+p_gbd_m1 <- fixef_draws %>% 
+  unnest(samples) %>% 
+  ggplot(aes(.value/1.2, Cause, col = Sex, fill = Sex)) +
+  scale_x_continuous(
+    "Change / decade [95%CI]",
+    breaks = pretty_breaks()
+  ) +
+  scale_color_brewer("Sex", palette = "Set1", aesthetics = c("color", "fill")) +
+  geom_vline(xintercept = 0, size = .2, lty = 2) +
+  stat_pointinterval(
+    position = position_dodgev(.3),
+    .width = c(.8, .95),
+    size = .5
+  ) +
+  stat_halfeye(
+    position = position_dodgev(.3), normalize = "panels",
+    alpha = .4, point_interval = NULL, show.legend = FALSE
+  )
+p_gbd_m1
+```
+
+Plot of fixed and random effects
+
+```{r}
+# These strings make hypothesis() calculate sex-specific slopes given my contrast codes for Sex
+h_sex <- c(
+  "Female" = "Time + Time:Sex1*-.5 = 0",
+  "Male" = "Time + Time:Sex1*.5 = 0"
+)
+# Summaries of fixed effects
+fixef_summary <- fits_brm %>% 
+  mutate(
+    out = map(
+      fit,
+      ~hypothesis(.x, h_sex) %>% 
+        .$hypothesis
+    )
+  ) %>% 
+  select(-fit)
+# Summaries of random effects for age and country groupings
+# Get just average (across sexes) effects of time for random effects
+h_avg <- c("Average" = "Time = 0")
+ranef_summary <- fits_brm %>% 
+  expand_grid(G = c("Age", "Country")) %>% 
+  mutate(
+    out = map2(
+      fit, G,
+      ~hypothesis(.x, h_avg, scope = "coef", group = .y) %>% 
+        .$hypothesis
+    )
+  ) %>% 
+  select(-fit)
+
+p1 <- fixef_summary %>% 
+  unnest(out) %>% 
+  ggplot(aes(Estimate, Cause, col = Hypothesis)) +
+  scale_color_brewer(palette = "Set1") +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_pointrangeh(
+    aes(xmin = CI.Lower, xmax = CI.Upper),
+    position = position_dodgev(.4)
+  ) +
+  theme(legend.position = "none")
+
+p2 <- ranef_summary %>% 
+  filter(G == "Age") %>% 
+  unnest(out) %>% 
+  ggplot(aes(Estimate, Cause, col = Group)) +
+  scale_color_viridis_d() +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_pointrangeh(
+    aes(xmin = CI.Lower, xmax = CI.Upper),
+    position = position_dodgev(.4),
+    size = .4, fatten = 1.5
+  ) +
+  guides(color = guide_legend(nrow = 4)) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "bottom", 
+    legend.title = element_blank()
+  )
+
+p3 <- ranef_summary %>% 
+  filter(G == "Country") %>% 
+  unnest(out) %>% 
+  left_join(distinct(d, Country, Region), by = c("Group" = "Country")) %>% 
+  ggplot(aes(Estimate, Cause, col = Region)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_pointrangeh(
+    aes(xmin = CI.Lower, xmax = CI.Upper),
+    position = position_dodgev(.4),
+    size = .4, fatten = 1.5
+  ) +
+  guides(color = guide_legend(nrow = 4)) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+p1 / (p2 | p3)
+```
+
+```{r}
+# Plot of age random + fixed
+# Age
+p_gbd_m2 <- ranef_summary %>% 
+  filter(G == "Age") %>% 
+  unnest(out) %>% 
+  pivot_wider(names_from = Hypothesis, values_from = Estimate:Star) %>% 
+  ggplot(aes(Estimate_Female, Estimate_Male)) +
+  geom_blank(aes(Estimate_Male, Estimate_Female)) +
+  scale_x_continuous(
+    "Change [Females]",
+    breaks = pretty_breaks(3)
+  ) +
+  scale_y_continuous(
+    "Change [Males]",
+    breaks = pretty_breaks(3)
+  ) +
+  scale_color_viridis_d("Age") +
+  geom_vline(xintercept = 0, size = .2, lty = 2) +
+  geom_hline(yintercept = 0, size = .2, lty = 2) +
+  geom_abline(size = .2) +
+  geom_point(aes(col = Group)) +
+  # Male summary
+  geom_pointrange(
+    data = fixef_summary %>% 
+      unnest(out) %>% 
+      pivot_wider(names_from = Hypothesis, values_from = Estimate:Star),
+    aes(ymin = CI.Lower_Male, ymax = CI.Upper_Male)
+  ) +
+  # Female summary
+  geom_pointrange(
+    data = fixef_summary %>% 
+      unnest(out) %>% 
+      pivot_wider(names_from = Hypothesis, values_from = Estimate:Star),
+    aes(xmin = CI.Lower_Female, xmax = CI.Upper_Female)
+  ) +
+  facet_wrap("Cause", nrow = 1, scales = "free") +
+  theme(aspect.ratio = 1)
+# Country
+p_gbd_m3 <- ranef_summary %>% 
+  filter(G == "Country") %>% 
+  unnest(out) %>% 
+  pivot_wider(names_from = Hypothesis, values_from = Estimate:Star) %>%
+  left_join(distinct(d, Country, Region), by = c("Group" = "Country")) %>% 
+  ggplot(aes(Estimate_Female, Estimate_Male)) +
+  geom_blank(aes(Estimate_Male, Estimate_Female)) +
+  scale_x_continuous(
+    "Change [Females]",
+    breaks = pretty_breaks(3)
+  ) +
+  scale_y_continuous(
+    "Change [Males]",
+    breaks = pretty_breaks(3)
+  ) +
+  geom_vline(xintercept = 0, size = .2, lty = 2) +
+  geom_hline(yintercept = 0, size = .2, lty = 2) +
+  geom_abline(size = .2) +
+  geom_point(shape = 1, aes(col = Region)) +
+  # Male summary
+  geom_pointrange(
+    data = fixef_summary %>% 
+      unnest(out) %>% 
+      pivot_wider(names_from = Hypothesis, values_from = Estimate:Star),
+    aes(ymin = CI.Lower_Male, ymax = CI.Upper_Male)
+  ) +
+  # Female summary
+  geom_pointrange(
+    data = fixef_summary %>% 
+      unnest(out) %>% 
+      pivot_wider(names_from = Hypothesis, values_from = Estimate:Star),
+    aes(xmin = CI.Lower_Female, xmax = CI.Upper_Female)
+  ) +
+  facet_wrap("Cause", nrow = 1, scales = "free") +
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+((p_gbd_m3 | p_gbd_m2) & theme(legend.position = "none")) +
+  plot_annotation(tag_levels = "A")
+```
+
+Add these plots to a single figure with data
+
+```{r}
+pa <- (p_gbd_1 / p_gbd_2) +
+  plot_layout(heights = c(4.5, 5.5))
+pb <- (p_gbd_3 / p_gbd_4) &
+  guides(
+    color = guide_legend(
+      override.aes = list(size = 1),
+      ncol = 1,
+      revese = TRUE
+    )
+  ) &
+  plot_layout(heights = c(3, 7))
+pc <- (p_gbd_m3 + theme(legend.position = "none") | 
+         p_gbd_m2 + theme(legend.position = "none")) &
+  theme(axis.text = element_text(size = 8))
+p_gbd <- ((pa | pb) / pc) + 
+  plot_layout(heights = c(8.8, 1.2)) +
+  plot_annotation(tag_levels = "A")
+
+agg_png(
+  "output/Fig-GBD-with-parameters.png",
+  height = 2600, width = 3600, res = 300
+)
+p_gbd
+dev.off()
+```
+
+
+## Model 2: Associations
+
+### Figure
+
+```{r}
+d %>% 
+  filter(
+    Region == "Anglo",
+    Sex == "Female",
+    Age == "15 to 19"
+  ) %>% 
+  ggplot(aes(Internet1, val, col = Country)) +
+  scale_x_continuous(
+    "Internet users at previous year"
+  ) +
+  scale_y_continuous(
+    "Rate"
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F, size = .2) +
+  facet_wrap("Cause", scales = "free_y")
+```
+
+### GBD~Internet lme4
+
+```{r}
+# Fit GBD internet lmer models
+file_path <- "output/lme-gbd-internet.rds"
+if (!file.exists(file_path)) {
+  fits_lme <- d %>% 
+    group_by(Cause) %>% 
+    partition(cluster) %>% 
+    summarise(
+      fit = list(
+        lmer(
+          val ~ (Time + Internet1) * Sex + 
+            (1 + (Time + Internet1) * Sex | Region) +
+            (1 + (Time + Internet1) * Sex | Country) +
+            (1 + (Time + Internet1) * Sex | Age),
+          data = cur_data_all()
+        )
+      )
+    ) %>% 
+    collect() %>% 
+    ungroup()
+  write_rds(fits_lme, file_path)
+} else {
+  fits_lme <- read_rds(file_path)
+}
+```
+
+```{r}
+x <- lmer(
+  val ~ (Time + Internet1) * Sex + 
+    (1 | Region) +
+    (1 | Country) +
+    (1 | Age),
+  data = d %>% filter(Cause == "Depression") %>% slice_sample(prop = .1)
+)
+summary(x)
+
+dm <- d %>% 
+  mutate(
+    Fixed = Fixed - mean(Fixed, na.rm = TRUE),
+    Mobile = Mobile - mean(Mobile, na.rm = TRUE)
+  )
+dm <- dm %>% 
+  pivot_longer(
+    c(Fixed, Mobile), 
+    names_to = "Internet", 
+    values_to = "Subscriptions"
+  )
+
+# tidy function for lm's that fail
+tidy_na <- possibly(
+  function(x) bind_cols(tidy(x, conf.int = TRUE), nobs = nobs(x)), 
+  tibble(estimate = NA)
+)
+
+cluster_copy(cluster, "tidy_na")
+m1 <- dm %>% 
+  group_by(Region, Country, Sex, Age, Cause, Internet) %>% 
+  partition(cluster) %>%
+  summarise(
+    tidy_na(lm(val ~ Year + Subscriptions + lag(Subscriptions)))
+  ) %>% 
+  collect() %>%
+  ungroup()
+m1
+coefs <- tmp %>% 
+  summarise(
+    Model1 = list(
+      tidy_na(lm(Depression ~ Year, data = cur_data()))
+    ),
+    Model2 = list(
+      tidy_na(lm(Depression ~ Year + lag(fixed), data = cur_data()))
+    ),
+    Model3 = list(
+      tidy_na(lm(Depression ~ Year + lag(fixed) + fixed, data = cur_data()))
+    )
+  )
+coefs %>% 
+  pivot_longer(Model1:Model3) %>% 
+  unnest(value) %>% 
+  filter(term != "(Intercept)") %>% 
+  filter(Country %in% sample(coefs$Country, 20)) %>% 
+  ggplot(aes(estimate, Country, col = name)) +
+  geom_point() +
+  facet_wrap("term", nrow = 1, scales = "free_x")
+```
+
+## Model 2: Heterogeneity
+
+Examine model 2's parameter heterogeneity across clusters.
