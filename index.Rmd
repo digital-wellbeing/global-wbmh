@@ -38,6 +38,7 @@ library(ragg)
 library(scales)
 library(ggh4x)
 library(tidybayes)
+library(naniar)
 library(ggdist)
 library(parameters)
 library(countrycode)
@@ -79,18 +80,17 @@ theme_set(
   ) +
     theme(
       panel.grid = element_blank(),
-      strip.text = element_text(margin = margin(4,4,4,4, "pt"))
+      strip.text = element_text(margin = margin(4, 4, 4, 4, "pt"))
     )
 )
 
 # MCMC settings
 options(brms.backend = "cmdstanr")
 # Run this to delete fitted models and refit
-# unlink(list.files(pattern = "brm-.*\\.rds"))
+# unlink(list.files(pattern = "output/brm-.*\\.rds"))
 
 # parallel computations
-MAX_CORES <- as.numeric(Sys.getenv("MAX_CORES"))
-if (is.na(MAX_CORES)) MAX_CORES <- parallel::detectCores(logical = FALSE)
+MAX_CORES <- parallel::detectCores(logical = TRUE) / 2
 cluster <- new_cluster(MAX_CORES)
 cluster_library(cluster, c("lme4", "dplyr", "stringr"))
 
@@ -194,13 +194,13 @@ Missing values
 # Calculate numbers of missing values for fixed (2004-) and mobile (2007-)
 bind_rows(
   select(itu, Internet) %>% 
-    naniar::miss_var_summary(),
+    miss_var_summary(),
   filter(itu, Year >= 2004) %>% 
     select(Fixed) %>% 
-    naniar::miss_var_summary(),
+    miss_var_summary(),
   filter(itu, Year >= 2007) %>% 
     select(Mobile) %>% 
-    naniar::miss_var_summary()
+    miss_var_summary()
 ) %>% 
   mutate(pct_miss = percent(pct_miss/100)) %>% 
   kbl(caption = "ITU Missingness") %>% 
@@ -503,10 +503,14 @@ p_itu <- itu %>%
   geom_line(size = .25, col = "dodgerblue4") +
   facet_grid(Type~Region) +
   theme(legend.position = "none")
-agg_png("output/Fig-ITU.png", height = 1200, width = 3200, res = 300)
+
 p_itu
-dev.off()
-agg_png("output/Fig-ITU-internet.png", height = 1200, width = 3200, res = 300)
+ggsave(
+  "output/Fig-ITU.png", 
+  device = agg_png,
+  height = 2400, width = 3200, res = 300, units = "px"
+)
+
 p_itu %+% 
   (filter(p_itu$data, Type == "Internet") %>% 
      mutate(Region = str_replace(Region, "\n", " "))) + 
@@ -517,7 +521,11 @@ p_itu %+%
     expand = expansion(c(0.02, 0.1))
   ) +
   facet_wrap("Region", nrow = 2)
-dev.off()
+ggsave(
+  "output/Fig-ITU-internet.png", 
+  device = agg_png,
+  height = 1200, width = 3200, res = 300, units = "px"
+)
 ```
 
 ### Mental health
@@ -561,7 +569,6 @@ p_gbd <- (pa / pb) +
   plot_annotation(tag_levels = "A")
 
 p_gbd
-
 ggsave(
   "output/Fig-GBD.png", 
   device = agg_png,
@@ -651,18 +658,16 @@ Shall we fit multiple times: First without interaction with age, gender, then se
 
 ```{r fit-gbd-time-brms}
 fit_empty <- brm(
-  val ~ Time * Sex + 
-    (1 + Time * Sex | Country) +
-    (1 + Time * Sex | Region) +
-    (1 + Time * Sex | Age),
-  data = filter(d, Cause == "Depression"),
+  val ~ 0 + Sex:Age + Time:Sex:Age + 
+    (0 + Sex:Age + Time:Sex:Age | Country) +
+    (0 + Sex:Age + Time:Sex:Age | Region),
+  data = filter(d_young, Cause == "Depression"),
   file = "output/brm-gbd-time-empty",
   chains = 0,
   threads = 3,
 )
 
-# cluster_copy(cluster, "fit_empty")
-fits_brm <- d %>% 
+fits_brm <- d_young %>% 
   group_by(Cause) %>% 
   summarise(
     fit = list(
