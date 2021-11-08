@@ -548,6 +548,86 @@ ggsave(
 )
 ```
 
+### Multiple lines
+
+Here we create two plots. One to show all main variables' time trends for each region, and country within region. Then, show the outcome time trends for top internet trend in each region.
+
+```{r}
+pa <- bind_rows(
+  gbd %>% 
+    group_by(region, country, year, cause) %>% 
+    summarise(mean = mean(val/100)),
+  itu %>% 
+    group_by(region, country, year) %>% 
+    summarise(mean = mean(internet, na.rm = TRUE)) %>% 
+    mutate(cause = "Internet")
+) %>% 
+  ungroup() %>% 
+  mutate(cause = fct_relevel(cause, "Internet")) %>% 
+  mutate(year = make_date(year)) %>% 
+  ggplot(aes(year, mean, color = cause)) +
+  scale_color_brewer(
+    "Variable",
+    palette = "Set1", direction = -1
+  ) +
+  scale_y_continuous(
+    "Rate",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
+  ) +
+  geom_line(aes(group = interaction(country, cause)), alpha = .25, size = .4) +
+  stat_summary(fun = mean, geom = "line", size = .6) +
+  facet_grid(cause~region, scales = "free_y") +
+  theme(legend.position = "none")
+
+# Get top 1 internet trend country in each region
+top_trends <- gbd %>% 
+  semi_join(distinct(itu, country)) %>% 
+  group_by(region, country) %>% 
+  summarise(tidy(lm(internet ~ time, data = cur_data_all()))) %>% 
+  filter(term == "time") %>% 
+  group_by(region) %>% 
+  slice_max(order_by = estimate, n = 1)
+pb <- gbd %>% 
+  filter(country %in% top_trends$country) %>%
+  mutate(country = factor(country, levels = top_trends$country)) %>% 
+  mutate(Group = str_glue("{sex} ({age})")) %>% 
+  mutate(year = make_date(year)) %>% 
+  ggplot(aes(year, val/100, col = Group)) +
+  scale_color_brewer(palette = "Paired") +
+  scale_y_continuous(
+    "Rate",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .6) +
+  facet_grid(cause~country, scales = "free_y")
+
+(pa + theme(axis.title.x = element_blank())) / 
+  pb * 
+  theme(panel.spacing = unit(2, "pt")) +
+  plot_layout(heights = c(4, 3)) +
+  plot_annotation(tag_levels = "A")
+ggsave(
+  "output/Fig-all-vars-timeseries.png", 
+  device = agg_png,
+  height = 2400, width = 3600, res = 300, units = "px"
+)
+```
+
+
 ## Model 1: Temporal trends
 
 We then model the mental health and well-being outcomes over time allowing for heterogeneity across locations and demographic groups.
