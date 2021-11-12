@@ -42,6 +42,7 @@ library(ggtext)
 library(janitor)
 library(brms)
 library(gtsummary)
+library(ellipse)
 library(imputeTS)
 library(broom.mixed)
 library(ragg)
@@ -449,6 +450,11 @@ contrasts(gbd$age) <- c(-.5, .5)
 gbd_wide <- gbd %>%
   pivot_wider(names_from = cause, values_from = c(val, se))
 names(gbd_wide) <- str_remove(names(gbd_wide), "val_")
+
+# Transform edge proportions to fit beta distribution
+gbd_10 <- gbd_wide %>% 
+  mutate(internet = if_else(internet == 0, .0000000001, internet)) %>% 
+  mutate(internet = if_else(internet == 1, .9999999999, internet))
 ```
 
 We also save a synthetic version of this dataset to better enable others to reproduce our analytical procedures:
@@ -884,11 +890,6 @@ i_{i[c][r]} &\sim
 $$
 
 ```{r}
-# Transform edge proportions to fit beta distribution
-gbd_10 <- gbd_wide %>% 
-  mutate(internet = if_else(internet == 0, .0000000001, internet)) %>% 
-  mutate(internet = if_else(internet == 1, .9999999999, internet))
-
 # Define a model of internet proportion over time
 bf_int <- bf(
   internet ~ 1 + time + 
@@ -1024,131 +1025,215 @@ ggsave(
 )
 ```
 
+A figure of coefficients
+
+```{r}
+anx_draws <- spread_draws(
+  fit_anx, 
+  b_Anxiety_time, r_region__Anxiety[region, term] | region
+) %>% 
+  filter(term == "time") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Anxiety_time) %>% 
+  mutate(outcome = "Anxiety")
+dep_draws <- spread_draws(
+  fit_dep, 
+  b_Depression_time, r_region__Depression[region, term] | region
+) %>% 
+  filter(term == "time") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Depression_time) %>% 
+  mutate(outcome = "Depression")
+sel_draws <- spread_draws(
+  fit_sel, 
+  b_Selfharm_time, r_region__Selfharm[region, term] | region
+) %>% 
+  filter(term == "time") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Selfharm_time) %>% 
+  mutate(outcome = "Selfharm")
+
+p_time_main_coefs <- bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  mutate(across(Africa:Southern.Asia, ~.+Average)) %>% 
+  pivot_longer(Average:Southern.Asia, names_to = "region") %>% 
+  mutate(region = fct_relevel(factor(region), "Average")) %>% 
+  mutate(outcome = factor(outcome)) %>% 
+  mutate(is_average = region == "Average") %>% 
+  mutate(region = str_replace(region, "\\.", " ")) %>% 
+  mutate(region = if_else(region=="Average", "**Average**", region)) %>% 
+  ggplot(aes(value, region, fill = is_average, alpha = is_average)) +
+  scale_fill_manual(values = c("dodgerblue1", "dodgerblue4")) +
+  scale_alpha_manual(values = c(.5, .9)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_x_continuous("Linear trend", breaks = pretty_breaks()) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels"
+  ) +
+  facet_wrap("outcome", nrow = 1, scales = "free_x") +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "none"
+  )
+p_time_main_coefs
+```
+
+
+###### Correlations
+
 Calculate country coefficients and show scatterplots
 
 ```{r time-correlation-anxiety}
-# Get average and region
-r_region_anxiety <- fit_anx %>% 
-  spread_draws(
-    b_Anxiety_time, 
+# Function to wrangle draws at multiple levels and create scatterplots + ellipses
+draw_scatterplot <- function(fit, beta, r_region, r_country, sd_country, cor_country) {
+  # Get average and region-specific slopes
+  r_region_draws <- fit %>% 
+    spread_draws(
+      {{beta}}, 
+      b_internet_time,
+      {{r_region}}[region, term],
+      r_region__internet[region, term]
+    ) %>% 
+    filter(term == "time") %>% 
+    ungroup() %>% 
+    # Fix names by replacing dot with line break
+    mutate(region = str_replace(region, "\\.", "\n"))
+  
+  # Then country
+  r_country_draws <- fit %>% 
+    spread_draws(
+      {{r_country}}[country, term],
+      r_country__internet[country, term]
+    ) %>% 
+    filter(term == "time") %>% 
+    ungroup() %>% 
+    # Fix names by taking labels from original names
+    mutate(
+      country = factor(
+        country, 
+        labels = sort(unique(fit$data$country))
+      )
+    ) %>% 
+    left_join(distinct(gbd, region, country))
+  
+  # Calculate country coefficients
+  country_coefs <- left_join(r_country_draws, r_region_draws) %>% 
+    mutate(
+      internet = b_internet_time + r_region__internet + r_country__internet,
+      outcome = {{beta}} + {{r_region}} + {{r_country}}
+    ) %>% 
+    group_by(country, region) %>% 
+    median_qi(internet, outcome)
+  
+  # Create country ellipse data
+  country_ellipse <- spread_draws(
+    fit,
+    {{beta}}, 
     b_internet_time,
-    r_region__Anxiety[region, term],
-    r_region__internet[region, term]
+    {{sd_country}},
+    sd_country__internet_time,
+    {{cor_country}}, 
+    ndraws = 100
   ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by replacing dot with line break
-  mutate(region = str_replace(region, "\\.", "\n"))
-
-# Then country
-r_country_anxiety <- fit_anx %>% 
-  spread_draws(
-    r_country__Anxiety[country, term],
-    r_country__internet[country, term]
-  ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by taking labels from original names
-  mutate(
-    country = factor(
-      country, 
-      labels = sort(unique(fit_anx$data$country))
+    rename(
+      cor = {{cor_country}}, 
+      sd_outcome = {{sd_country}},
+      sd_i = sd_country__internet_time,
+      b_outcome = {{beta}},
+      b_i = b_internet_time
+    ) %>% 
+    mutate(
+      e = pmap(
+        list(cor, sd_outcome, sd_i, b_outcome, b_i), 
+        function(cor, sd_a, sd_i, b_a, b_i) 
+          ellipse(
+            cor, 
+            scale = c(sd_i, sd_outcome), 
+            centre = c(b_i, b_outcome), 
+            level = .90
+          ) %>% 
+          as_tibble()
+      )
+    ) %>% 
+    unnest(e)
+  
+  # Correlation
+  country_cor_result <- spread_draws(fit, {{cor_country}}) %>% 
+    median_qi(.width = .90) %>% 
+    mutate(across(where(is.numeric), ~round(., 2))) %>%
+    {str_glue("{.[,1]} [{.[,2]}, {.[,3]}]")}
+  
+  # Plot
+  country_coefs %>% 
+    ggplot(aes(internet, outcome)) +
+    geom_path(
+      data = country_ellipse,
+      aes(x = x, y = y), 
+      alpha = .2, size = .1, col = "dodgerblue1"
+    ) +
+    geom_vline(xintercept = 0, lty = 2, size = .2) +
+    geom_hline(yintercept = 0, lty = 2, size = .2) +
+    geom_point(col = "dodgerblue1", size = 1, alpha = .5) +
+    scale_x_continuous(
+      "Internet trend",
+      breaks = pretty_breaks()
+    ) +
+    scale_y_continuous(
+      breaks = pretty_breaks()
+    ) +
+    annotate(
+      "text",
+      x = Inf, y = Inf, label = country_cor_result,
+      size = 4, vjust = 1.5, hjust = 1.05, color = "dodgerblue4",
+      family = Font
     )
-  ) %>% 
-  left_join(distinct(gbd, region, country))
-
-# Calculate country coefficients
-country_anxiety <- left_join(r_country_anxiety, r_region_anxiety) %>% 
-  mutate(
-    internet = b_internet_time + r_region__internet + r_country__internet,
-    anxiety = b_Anxiety_time + r_region__Anxiety + r_country__Anxiety
-  ) %>% 
-  group_by(country, region) %>% 
-  median_qi(internet, anxiety)
-
-country_anxiety_ellipse <- spread_draws(
-  fit_anx,
-  b_Anxiety_time, b_internet_time,
-  cor_country__internet_time__Anxiety_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_country__internet_time__Anxiety_time, 
-        y = b_internet_time, 
-        z = b_Anxiety_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-region_anxiety_ellipse <- spread_draws(
-  fit_anx,
-  b_Anxiety_time, b_internet_time,
-  cor_region__internet_time__Anxiety_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_region__internet_time__Anxiety_time, 
-        y = b_internet_time, 
-        z = b_Anxiety_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-country_anxiety_cor <- fit_anx %>%
-  as_draws_df(
-    variable = c(
-      "cor_country__internet_time__Anxiety_time",
-      "cor_region__internet_time__Anxiety_time"
-    ),
-    regex = TRUE
-  ) %>% 
-  as_tibble()
-country_anxiety_result <- country_anxiety_cor %>%   
-  summarise_draws(quantile, rhat, .args = list(probs = c(.5, .05, .95))) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  mutate(result = str_glue("{`50%`} [{`5%`}, {`95%`}]"))
-
-p_cor_country_anx <- country_anxiety %>% 
-  ggplot(aes(internet, anxiety)) +
-  # geom_path(
-  #   data = region_anxiety_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue4"
-  # ) +
-  # geom_path(
-  #   data = country_anxiety_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue1"
-  # ) +
-  geom_vline(xintercept = 0, lty = 2, size = .2) +
-  geom_hline(yintercept = 0, lty = 2, size = .2) +
-  geom_point(col = "dodgerblue1", size = 1, alpha = .75) +
-  scale_x_continuous(
-    "Linear internet trend",
-    breaks = pretty_breaks()
-  ) +
-  scale_y_continuous(
-    "Linear anxiety trend",
-    breaks = pretty_breaks()
-  ) +
-  geom_richtext(
-    data = country_anxiety_result %>% 
-      filter(variable == "cor_country__internet_time__Anxiety_time"),
-    aes(x = -Inf, y = Inf, label = result),
-    size = 3, vjust = 1, hjust = -0.1, color = "dodgerblue4",
-    family = Font,
-    fill = NA, label.color = NA
-  ) +
-  theme(aspect.ratio = 1)
+}
 ```
+
+```{r}
+p_cor_country_anx <- draw_scatterplot(
+  fit_anx, 
+  b_Anxiety_time, 
+  r_region__Anxiety, 
+  r_country__Anxiety,
+  sd_country__Anxiety_time,
+  cor_country__internet_time__Anxiety_time
+) + labs(y = "Anxiety trend")
+p_cor_country_dep <- draw_scatterplot(
+  fit_dep, 
+  b_Depression_time, 
+  r_region__Depression, 
+  r_country__Depression,
+  sd_country__Depression_time,
+  cor_country__internet_time__Depression_time
+) + labs(y = "Depression trend")
+p_cor_country_sel <- draw_scatterplot(
+  fit_sel, 
+  b_Selfharm_time, 
+  r_region__Selfharm, 
+  r_country__Selfharm,
+  sd_country__Selfharm_time,
+  cor_country__internet_time__Selfharm_time
+) + labs(y = "Self-harm trend")
+```
+
+```{r}
+p_time_main_correlations <- p_cor_country_anx |
+  p_cor_country_dep |
+  p_cor_country_sel
+
+(wrap_elements(grid::textGrob('Negative experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Positive experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Life satisfaction\nTBD'))) /
+  p_time_main_correlations
+
+p_time_main_coefs /
+  p_time_main_correlations
+```
+
 
 ```{r time-correlation-depression}
 # Get average and region
@@ -1744,28 +1829,28 @@ bf_sel <- bf(
 )
 
 # Fit models in background (need 12 cores)
-fit_anx <- brm(
-  bf_int + bf_anx + set_rescor(FALSE),
+job::job({fit_anx <- brm(
+  bf_anx,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-anxiety",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
+  iter = 1200, warmup = 600, refresh = 10,
   threads = 1,
   control = list(adapt_delta = .9)
-)
-fit_dep <- brm(
-  bf_int + bf_dep + set_rescor(FALSE),
+)})
+job::job({fit_dep <- brm(
+  bf_dep,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-depression",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
+  iter = 1200, warmup = 600, refresh = 10,
   threads = 1,
   control = list(adapt_delta = .9)
-)
+)})
 fit_sel <- brm(
-  bf_int + bf_sel + set_rescor(FALSE),
+  bf_sel,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-selfharm",
   chains = 4,
@@ -1798,52 +1883,206 @@ fits_brm_internet_main %>%
   kable_minimal(full_width = FALSE)
 ```
 
-Different levels
+###### Fitted lines
+
+Plot of fitted lines
 
 ```{r}
-# Get average and region
-r_selfharm <- fit_sel %>% 
-  spread_draws(
-    b_Selfharm_i1_cw, 
-    r_region__Selfharm[region, term]
-  ) %>% 
-  filter(term == "i1_cw") %>% 
+draws_country_anx <- epred_draws(
+  fit_anx, 
+  gbd_wide %>% 
+    filter(country %in% sort(unique(fit_anx$data$country))) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region) + 
+    (1 + time + sex + age + i1_cw |c| country), 
+  ndraws = 100,
+  resp = "Anxiety"
+)
+
+draws_country_dep <- epred_draws(
+  fit_dep, 
+  gbd_wide %>% 
+    filter(country %in% sort(unique(fit_dep$data$country))) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region) + 
+    (1 + time + sex + age + i1_cw |c| country), 
+  ndraws = 30,
+  resp = "Depression"
+)
+
+draws_country_sel <- epred_draws(
+  fit_sel, 
+  gbd_wide %>% 
+    filter(country %in% sort(unique(fit_sel$data$country))) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region) + 
+    (1 + time + sex + age + i1_cw |c| country), 
+  ndraws = 30,
+  resp = "Selfharm"
+)
+
+draws_region_anx <- epred_draws(
+  fit_anx, 
+  distinct(fit_anx$data, region, sex, age, i1_cb) %>% 
+    group_by(region) %>% 
+    mutate(i1_cb = mean(i1_cb, na.rm = T)) %>% 
+    crossing(i1_cw = seq(-4, 4, length = 10)) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region),
+  ndraws = 30,
+  resp = "Anxiety"
+) %>% 
+  mutate(outcome = "Anxiety")
+
+draws_region_dep <- epred_draws(
+  fit_dep, 
+  distinct(fit_dep$data, region, sex, age, i1_cb) %>%
+    group_by(region) %>% 
+    mutate(i1_cb = mean(i1_cb, na.rm = T)) %>% 
+    crossing(i1_cw = seq(-4, 4, length = 10)) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region),
+  ndraws = 30,
+  resp = "Depression"
+) %>% 
+  mutate(outcome = "Depression")
+
+draws_region_sel <- epred_draws(
+  fit_sel, 
+  distinct(fit_sel$data, region, sex, age, i1_cb) %>% 
+    group_by(region) %>% 
+    mutate(i1_cb = mean(i1_cb, na.rm = T)) %>% 
+    crossing(i1_cw = seq(-4, 4, length = 10)) %>% 
+    mutate(time = 0),
+  re_formula = ~(1 + time + sex + age + i1_cw |r| region),
+  ndraws = 30,
+  resp = "Selfharm"
+) %>% 
+  mutate(outcome = "Self-harm")
+
+draws_region <- bind_rows(
+  draws_region_anx, draws_region_dep, draws_region_sel
+) %>% 
+  group_by(outcome, region, i1_cw) %>% 
+  median_qi(.epred)
+
+bind_rows(
+  draws_country_anx %>% mutate(outcome = "Anxiety"),
+  draws_country_dep %>% mutate(outcome = "Depression"),
+  draws_country_sel %>% mutate(outcome = "Self-harm")
+) %>% 
+  group_by(country) %>% 
+  # mutate(i1_cw2 = i1_cw/10 + mean(internet, na.rm = T)) %>% 
   ungroup() %>% 
-  # Fix names by replacing dot with line break
-  mutate(region = str_replace(region, "\\.", "\n"))
-
-fit_sel %>% 
-  spread_draws(
-    r_country__Selfharm[country, term]
-    )
-
-# Calculate country coefficients
-r_selfharm <- r_selfharm %>% 
-  mutate(
-    b_average = b_Selfharm_i1_cw,
-    b_region = b_average + r_region__Selfharm,
-    b_country = b_region + r_country__Selfharm
-  )
-
-r_selfharm %>% 
-  distinct(.draw, b_average) %>% 
-  mutate(region = "Average") %>% 
-  ggplot(aes(b_average, region)) +
-  stat_halfeye(size = 1, fill = "dodgerblue4") +
-  stat_halfeye(
-    data = r_selfharm %>% 
-      distinct(.draw, region, b_region),
-    aes(b_region),
-    size = 1, fill = "dodgerblue1"
+  ggplot(aes(i1_cw, .epred)) +
+  scale_x_continuous(
+    "Previous year's internet adoption relative to country average in 2000-2020",
+    breaks = pretty_breaks(3),
+    labels = function(x) percent(x/10, 1)
   ) +
-  geom_point(
-    data = 
-  )
-r_selfharm %>% 
-  group_by(region, country) %>% 
-  median_qi(b_country)
+  scale_y_continuous(
+    "Estimated rate",
+    breaks = pretty_breaks()
+  ) +
+  geom_ribbon(
+    data = draws_region,
+    aes(ymin = .lower, ymax = .upper),
+    fill = "dodgerblue4", size = .6, alpha = .2
+  ) +
+  geom_line(
+    data = draws_region,
+    col = "dodgerblue4", size = .6
+  ) +
+  stat_summary(
+    fun=mean, geom = "line",
+    aes(group = country), 
+    size = .4, alpha = .25, col = "dodgerblue1"
+  ) +
+  facet_grid(outcome~region, scales = "free_y") +
+  theme(panel.spacing = unit(2, "pt"))
 ```
 
+###### Forest plots
+
+figure of coefficients forest plot
+
+```{r}
+anx_draws <- spread_draws(
+  fit_anx, 
+  b_Anxiety_i1_cw, r_region__Anxiety[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Anxiety_i1_cw) %>% 
+  mutate(outcome = "Anxiety")
+dep_draws <- spread_draws(
+  fit_dep, 
+  b_Depression_i1_cw, r_region__Depression[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Depression_i1_cw) %>% 
+  mutate(outcome = "Depression")
+sel_draws <- spread_draws(
+  fit_sel, 
+  b_Selfharm_i1_cw, r_region__Selfharm[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_Selfharm_i1_cw) %>% 
+  mutate(outcome = "Selfharm")
+
+results_text <- bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  group_by(outcome) %>% 
+  summarise(parameters(cur_data()[-c(1:3)])) %>% 
+  mutate(region = str_replace(Parameter, "\\.", " ")) %>% 
+  mutate(is_average = region == "Average") %>% 
+  mutate(region = if_else(region=="Average", "**Average**", region)) %>% 
+  mutate(across(Median:CI_high, ~format(round(., 2), nsmall = 2)))
+
+p_internet_main_coefs <- bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  mutate(across(Africa:Southern.Asia, ~.+Average)) %>% 
+  pivot_longer(Average:Southern.Asia, names_to = "region") %>% 
+  mutate(region = fct_relevel(factor(region), "Average")) %>% 
+  mutate(outcome = factor(outcome)) %>% 
+  mutate(is_average = region == "Average") %>% 
+  mutate(region = str_replace(region, "\\.", " ")) %>% 
+  mutate(region = if_else(region=="Average", "**Average**", region)) %>% 
+  ggplot(aes(value, region, fill = is_average, alpha = is_average)) +
+  scale_fill_manual(values = c("dodgerblue1", "dodgerblue4")) +
+  scale_alpha_manual(values = c(.5, .9)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_y_discrete(expand = expansion(c(0.01, .1))) +
+  scale_x_continuous(
+    "Estimated association to internet adoption", 
+    breaks = pretty_breaks(), 
+    expand = expansion(c(.1, .5))
+  ) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels", height = .75
+  ) +
+  geom_text(
+    data = results_text, alpha = 1, size = 2.75, hjust = 1, vjust = -0.2,
+    aes(
+      x = Inf, 
+      label = str_glue("{Median} [{CI_low}, {CI_high}]")
+    )
+  ) +
+  facet_wrap("outcome", nrow = 1, scales = "free_x") +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "none"
+  )
+
+(wrap_elements(grid::textGrob('Negative experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Positive experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Life satisfaction\nTBD'))) /
+  p_internet_main_coefs
+```
 
 ##### Internet: Interactions
 
@@ -1868,31 +2107,27 @@ bf_sel <- bf(
   family = gaussian()
 )
 
-# Fit models in background (need 12 cores)
-job::job({
-  fit_anx <- brm(
-    bf_anx,
-    data = gbd_wide,
-    file = "output/brm-gbd-time-internet-anxiety-int2",
-    chains = 4,
-    cores = 4,
-    iter = 1200, warmup = 600, refresh = 10,
-    threads = 1,
-    control = list(adapt_delta = .9)
-  )
-}, title = "Fitting brms anxiety")
-job::job({
-  fit_dep <- brm(
-    bf_dep,
-    data = gbd_wide,
-    file = "output/brm-gbd-time-internet-depression-int2",
-    chains = 4,
-    cores = 4,
-    iter = 1200, warmup = 600, refresh = 10,
-    threads = 1,
-    control = list(adapt_delta = .9)
-  )
-}, title = "Fitting brms depression")
+# Fit models
+fit_anx <- brm(
+  bf_anx,
+  data = gbd_wide,
+  file = "output/brm-gbd-time-internet-anxiety-int2",
+  chains = 4,
+  cores = 4,
+  iter = 1200, warmup = 600, refresh = 10,
+  threads = 1,
+  control = list(adapt_delta = .9)
+)
+fit_dep <- brm(
+  bf_dep,
+  data = gbd_wide,
+  file = "output/brm-gbd-time-internet-depression-int2",
+  chains = 4,
+  cores = 4,
+  iter = 1200, warmup = 600, refresh = 10,
+  threads = 1,
+  control = list(adapt_delta = .9)
+)
 fit_sel <- brm(
   bf_sel,
   data = gbd_wide,
@@ -1903,226 +2138,428 @@ fit_sel <- brm(
   threads = 1,
   control = list(adapt_delta = .9)
 )
-```
-
-###### Plot: Average effects of time
-
-```{r eval = FALSE}
-fixef(fit_gbd_time) %>%
-  as.data.frame() %>% 
-  rownames_to_column("Parameter") %>% 
-  as_tibble()
-
-h <- paste(
-  c("valAnxiety_Time", "valDepression_Time", "valSelfharm_Time"), 
-  "= 0"
-)
-
-# Prepare average samples
-time_avg <- hypothesis(fit_gbd_time, h)
-time_avg_samples <- time_avg$samples
-names(time_avg_samples) <- time_avg$hypothesis$Hypothesis
-time_avg_samples <- time_avg_samples %>% 
-  pivot_longer(everything(), names_to = "Parameter") %>% 
-  mutate(region = "Average")
-
-# Prepare region samples
-time_region <- hypothesis(fit_gbd_time, h, scope = "coef", group = "region")
-time_region_samples <- time_region$samples
-names(time_region_samples) <- paste(
-  time_region$hypothesis$Hypothesis, 
-  time_region$hypothesis$Group, sep = ":"
-)
-time_region_samples <- time_region_samples %>% 
-  pivot_longer(everything(), names_to = "Parameter") %>% 
-  separate(Parameter, c("Parameter", "region"), sep = ":")
-
-# Prepare country point estimates
-time_country <- hypothesis(fit_gbd_time, h, scope = "coef", group = "country")
-time_country_hypothesis <- time_country$hypothesis %>% 
-  rename(country = Group, Parameter = Hypothesis)
-time_country_hypothesis <- left_join(
-  time_country_hypothesis, 
-  distinct(fit_gbd_time$data, country, region)
-)
-
-time_sum <- bind_rows(
-  time_region$hypothesis,
-  time_avg$hypothesis %>% mutate(Group = "Average")
-) %>% 
-  as_tibble() %>% 
-  rename(region = Group, Parameter = Hypothesis)
-
-bind_rows(
-  time_region_samples,
-  time_avg_samples
-) %>% 
-  mutate(region = fct_relevel(region, "Average")) %>% 
-  mutate(Average = region == "Average") %>% 
-  ggplot(aes(value/10, region)) +
-  scale_y_discrete(
-    expand = expansion(c(0.025, 0.075)),
-    labels = function(x) ifelse(x == "Average", "**Average**", x)
-  ) +
-  scale_x_continuous(
-    "Estimated yearly change",
-    breaks = pretty_breaks(5)
-  ) +
-  scale_alpha_manual(values = c(.5, 1)) +
-  geom_vline(xintercept = 0, size = .2, alpha = .25) +
-  stat_eye(
-    side = "top",
-    aes(col = region, fill = region, alpha = Average),
-    point_interval = NULL,
-    normalize = "panels", 
-    height = .75
-  ) +
-  geom_pointrangeh(
-    data = time_sum,
-    aes(x = Estimate/10, xmin = CI.Lower/10, xmax = CI.Upper/10),
-    size = .3, fatten = 1.4
-  ) +
-  geom_point(
-    data = time_country_hypothesis,
-    aes(col = region, x = Estimate/10), 
-    size = .5,
-    alpha = .25,
-    position = position_nudge(y = -.05)
-  ) +
-  facet_wrap(
-    "Parameter", ncol = 3, scales = "free_x",
-    labeller = as_labeller(
-      function(x) str_extract(x, "Anxiety|Depression|Selfharm"))
-  ) +
-  theme(
-    axis.text.y = element_markdown(),
-    legend.position = "none",
-    axis.title.y = element_blank()
-  )
-ggsave(
-  "output/Fig-brm-time-forest.png", 
-  device = agg_png,
-  height = 1200, width = 3200, res = 300, units = "px"
+fits_brm_internet_interactions <- tibble(
+  outcome = c("Anxiety", "Depression", "Selfharm"),
+  fit = list(fit_anx, fit_dep, fit_sel)
 )
 ```
 
-## Model 2: Associations
-
-This model expands the above to add internet adoption as a predictor.
-
-### GBD
-
-#### Figure
+Coefficients
 
 ```{r}
-gbd %>% 
-  ggplot(
-    aes(
-      x = i1_cw/10, 
-      y = val, 
-      col = region, fill = region
+fits_brm_internet_interactions %>% 
+  mutate(
+    out = map(
+      fit, 
+      ~as_draws(.x, variable = "b_", regex = TRUE) %>% 
+        summarise_draws(quantile, rhat, .args = list(probs = c(.5, .05, .95)))
     )
-  ) +
-  geom_point(size = .25, alpha = .1) +
-  stat_smooth(method = "lm", alpha = .2, size = .3) +
-  # stat_summary(fun = mean, geom = "line", size = .25) +
-  facet_grid(Cause~region, scales = "free_y") +
-  theme(legend.position = "none")
-```
-
-#### lme4
-
-```{r fit-gbd-internet-lme4}
-# These take about 1-3 hours each
-# run in parallel in background jobs
-# recommended to conduct this in interactive mode (rstudio)
-file_path <- "output/lme4-gbd-internet.rds"
-if (!file.exists(file_path)) {
-  library(job)
-  job({fit_anx <- lmer(
-    Anxiety ~ 1 + time * sex * age + i1_cw * sex * age + i1_cb +
-      (1 + time * sex * age + i1_cw * sex * age | region) +
-      (1 + time * sex * age + i1_cw * sex * age | country),
-    data = gbd_wide
-  )}, title = "Anxiety internet (lmer)")
-  job({fit_dep <- lmer(
-    Depression ~ 1 + time * sex * age + i1_cw * sex * age + i1_cb +
-      (1 + time * sex * age + i1_cw * sex * age | region) +
-      (1 + time * sex * age + i1_cw * sex * age | country),
-    data = gbd_wide
-  )}, title = "Depression internet (lmer)")
-  job({fit_sel <- lmer(
-    Selfharm ~ 1 + time * sex * age + i1_cw * sex * age + i1_cb +
-      (1 + time * sex * age + i1_cw * sex * age | region) +
-      (1 + time * sex * age + i1_cw * sex * age | country),
-    data = gbd_wide
-  )}, title = "Self harm internet (lmer)")
-  fits_lmer <- distinct(gbd, cause) %>% 
-    mutate(fit = list(fit_anx, fit_dep, fit_sel))
-  write_rds(fits_lmer, file_path)
-} else {fits_lmer <- read_rds(file_path)}
-```
-
-```{r}
-fits_lmer %>% 
-  mutate(out = map(fit, ~tidy(., conf.int = TRUE))) %>% 
+  ) %>% 
   select(-fit) %>% 
   unnest(out) %>% 
-  filter(term == "i1_cw")
+  # filter(str_detect(variable, "_i1_cw|b$")) %>% 
+  kbl(digits = 3) %>% 
+  kable_minimal(full_width = FALSE)
 ```
 
-#### brms
+Model comparisons
 
-```{r fit-gbd-internet-brms, eval = FALSE}
-# bf_gbd_internet <- bf(
-#   mvbind(
-#     val_Depression,
-#     val_Anxiety,
-#     val_Self_harm
-#   ) ~ 1 + Time + i1_cw + i1_cb +
-#     (1 + Time + i1_cw || region)
-#   (1 + Time + i1_cw || country)
-# ) +
-#   set_rescor(FALSE)
-# 
-# fit_gbd_internet <- brm(
-#   bf_gbd_internet,
-#   gbd_y_w,
-#   file = "output/brm-gbd-internet-mv",
-#   chains = 5,
-#   cores = 5,
-#   iter = 300, warmup = 150, refresh = 10,
-#   threads = 2,
-#   control = list(adapt_delta = .9, max_treedepth = 15)
-# )
+```{r}
+tmp <- left_join(
+  fits_brm_internet_main,
+  fits_brm_internet_interactions %>% rename(fit_i = fit)
+) %>% 
+  mutate(comp = map2(fit, fit_i, waic))
 
-bf_gbd_internet_demos <- bf(
-  mvbind(
-    Depression,
-    Anxiety,
-    Selfharm
-  ) ~ 1 + time * sex * age + i1_cw * sex * age + i1_cb +
-    (1 + time * sex * age + i1_cw * sex * age | country)
-) +
-  set_rescor(FALSE)
 
-p <- prior(normal(0, 3), class = b, resp = Anxiety) +
-  prior(normal(0, 3), class = b, resp = Depression) +
-  prior(normal(0, 3), class = b, resp = Selfharm) +
-  prior(student_t(7, 0, 1), class = sd, resp = Anxiety) +
-  prior(student_t(7, 0, 1), class = sd, resp = Depression) +
-  prior(student_t(7, 0, 1), class = sd, resp = Selfharm)
-
-job::job({fit_gbd_internet_demos <- brm(
-  bf_gbd_internet_demos,
-  gbd_wide,
-  prior = p,
-  file = "output/brm-gbd-internet-mv-demos",
-  chains = 5,
-  cores = 5,
-  iter = 450, warmup = 300, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9, max_treedepth = 15)
-)}, title = "brms internet")
 ```
 
+###### Forest plots
+
+figure of coefficients forest plot
+
+```{r}
+anx_draws <- spread_draws(
+  fit_anx, 
+  b_i1_cw, r_region[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_i1_cw) %>% 
+  mutate(outcome = "Anxiety")
+dep_draws <- spread_draws(
+  fit_dep, 
+  b_i1_cw, r_region[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_i1_cw) %>% 
+  mutate(outcome = "Depression")
+sel_draws <- spread_draws(
+  fit_sel, 
+  b_i1_cw, r_region[region, term] | region
+) %>% 
+  filter(term == "i1_cw") %>% 
+  ungroup() %>% 
+  select(-term) %>% 
+  rename(Average = b_i1_cw) %>% 
+  mutate(outcome = "Selfharm")
+
+results_text <- bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  group_by(outcome) %>% 
+  summarise(parameters(cur_data()[-c(1:3)])) %>% 
+  mutate(region = str_replace(Parameter, "\\.", " ")) %>% 
+  mutate(is_average = region == "Average") %>% 
+  mutate(region = if_else(region=="Average", "**Average**", region)) %>% 
+  mutate(across(Median:CI_high, ~format(round(., 2), nsmall = 2)))
+
+p_internet_main_coefs <- bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  mutate(across(Africa:Southern.Asia, ~.+Average)) %>% 
+  pivot_longer(Average:Southern.Asia, names_to = "region") %>% 
+  mutate(region = fct_relevel(factor(region), "Average")) %>% 
+  mutate(outcome = factor(outcome)) %>% 
+  mutate(is_average = region == "Average") %>% 
+  mutate(region = str_replace(region, "\\.", " ")) %>% 
+  mutate(region = if_else(region=="Average", "**Average**", region)) %>% 
+  ggplot(aes(value, region, fill = is_average, alpha = is_average)) +
+  scale_fill_manual(values = c("dodgerblue1", "dodgerblue4")) +
+  scale_alpha_manual(values = c(.4, .8)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_shape_manual(values = c(21, 19)) +
+  scale_y_discrete(expand = expansion(c(0.01, .1))) +
+  scale_x_continuous(
+    "Magnitude of association between internet adoption and well-being", 
+    breaks = pretty_breaks(), 
+    expand = expansion(c(.1, .5))
+  ) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels", 
+    height = .75, adjust = 1.5
+  ) +
+  stat_pointinterval(
+    alpha = 1, .width = c(.9),
+    interval_size = .5,
+    point_size = 1.5,
+    fill = "white",
+    aes(shape = after_stat(xmin > 0 | xmax < 0)),
+    position = position_nudge(0, -.025)
+  ) +
+  geom_text(
+    data = results_text, alpha = 1, size = 2.75, hjust = 1, vjust = -0.2,
+    aes(
+      x = Inf, 
+      label = str_glue("{Median} [{CI_low}, {CI_high}]")
+    )
+  ) +
+  facet_wrap("outcome", nrow = 1, scales = "free_x") +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "none"
+  )
+
+(wrap_elements(grid::textGrob('Negative experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Positive experiences\nTBD')) |
+    wrap_elements(grid::textGrob('Life satisfaction\nTBD'))) /
+  p_internet_main_coefs
+```
+
+Between country?
+
+```{r}
+pred_data <- gbd_wide %>% 
+  distinct(region, country, sex, age, i1_cb, i1_cw = 0, time = 0) %>% 
+  filter(country %in% sort(unique(fit_anx$data$country)))
+
+tmp <- epred_draws(
+  fit_anx, pred_data, re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region) + 
+    (1 + time*sex + time*age + i1_cw*sex + i1_cw*age | country)
+)
+
+tmp %>% 
+  group_by(region, country, i1_cb) %>% 
+  summarise(mean(.epred))
+
+conditional_effects(fit_anx, "i1_cb")
+
+gbd_wide %>% 
+  group_by(country) %>% 
+  summarise(i1_cb = unique(i1_cb), anx = mean(Anxiety)) %>% 
+  ggplot(aes(i1_cb, anx)) +
+  geom_point() +
+  stat_smooth()
+
+filter(country %in% sort(unique(fit_anx$data$country))) %>% 
+  mutate(time = 0) %>% 
+  group_by(country) %>% 
+  mutate(xmin = min(i1_cw, na.rm = TRUE), xmax = max(i1_cw, na.rm = TRUE)) %>% 
+  filter(i1_cw %in% c(xmin, xmax)) %>% 
+  ungroup()
+```
+
+Sex and Age
+
+```{r}
+# Get some stuff and transform :)
+get_draws <- function(fit) {
+  draws_region <- spread_draws(
+    fit, 
+    b_i1_cw, `b_age1:i1_cw`, `b_sex1:i1_cw`,
+    r_region[region, term] | term
+  ) %>% 
+    mutate(
+      `15 to 19` = b_i1_cw + i1_cw + (`age1:i1_cw` + `b_age1:i1_cw`)*-0.5,
+      `20 to 24` = b_i1_cw + i1_cw + (`age1:i1_cw` + `b_age1:i1_cw`)*0.5,
+      Female = b_i1_cw + i1_cw + (`sex1:i1_cw` + `b_sex1:i1_cw`)*-0.5,
+      Male = b_i1_cw + i1_cw + (`sex1:i1_cw` + `b_sex1:i1_cw`)*0.5,
+      Age = `age1:i1_cw` + `b_age1:i1_cw`,
+      Sex = `sex1:i1_cw` + `b_sex1:i1_cw`
+    ) %>% 
+    select(region, `15 to 19`:Sex)
+  
+  draws_avg <- spread_draws(
+    fit, 
+    b_i1_cw, `b_age1:i1_cw`, `b_sex1:i1_cw`
+  ) %>% 
+    mutate(
+      `15 to 19` = b_i1_cw + `b_age1:i1_cw`*-0.5,
+      `20 to 24` = b_i1_cw + `b_age1:i1_cw`*0.5,
+      Female = b_i1_cw + `b_sex1:i1_cw`*-0.5,
+      Male = b_i1_cw + `b_sex1:i1_cw`*0.5,
+      Age = `b_age1:i1_cw`,
+      Sex = `b_sex1:i1_cw`
+    ) %>% 
+    mutate(region = "**Average**") %>% 
+    select(region, `15 to 19`:Sex)
+  
+  draws <- bind_rows(
+    "regions" = draws_region,
+    "average" = draws_avg, 
+    .id = "Level"
+  ) %>% 
+    mutate(region = str_replace(region, "\\.", "\n")) %>% 
+    ungroup()
+  draws
+}
+
+draws <- bind_rows(
+  "Anxiety" = get_draws(fit_anx),
+  "Depression" = get_draws(fit_dep),
+  "Selfharm" = get_draws(fit_sel),
+  .id = "outcome"
+)
+
+draws_sum <- draws %>% 
+  select(outcome, region, Age, Sex) %>% 
+  group_by(outcome, region) %>% 
+  summarise(
+    describe_posterior(
+      cur_data(), centrality = "mean", test = "pd"
+    )
+  ) %>% 
+  rename(panel = Parameter) %>% 
+  mutate(across(where(is.numeric), ~round(., 2)))
+
+draws %>% 
+  select(outcome, Level, region, `15 to 19`:Male) %>% 
+  pivot_longer(-c(region, Level, outcome), names_to = "Group") %>% 
+  mutate(panel = if_else(str_detect(Group, "ale"), "Sex", "Age")) %>% 
+  mutate(
+    side = if_else(Group %in% c("15 to 19", "Female"), "top", "bottom")
+  ) %>% 
+  mutate(region = str_replace(region, "\\.", " ")) %>% 
+  mutate(region = fct_relevel(region, "**Average**")) %>% 
+  ggplot(aes(value, region, col = Group, fill = Group)) +
+  scale_alpha_manual(values = c(.6, .3)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_shape_manual(
+    values = c(21, 19), guide = "none"
+    ) +
+  scale_y_discrete(expand = expansion(c(0.1, 0.1))) +
+  scale_x_continuous(
+    "Magnitude of association between internet adoption and well-being", 
+    breaks = pretty_breaks(), 
+    expand = expansion(c(0, .05))
+  ) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels", 
+    height = .75, adjust = 1.5,
+    aes(side = side, group = side, alpha = Level), 
+    show.legend = FALSE
+  ) +
+  stat_pointinterval(
+    alpha = 1, .width = c(.9),
+    interval_size = .33,
+    point_size = 1.25,
+    fill = "white",
+    aes(shape = after_stat(xmin > 0 | xmax < 0), group = side),
+    position = position_dodgev(.25), key_glyph = draw_key_point
+  ) +
+  geom_richtext(
+    data = draws_sum %>% 
+      mutate(Group = NA) %>% 
+      filter(outcome %in% c("Anxiety", "Depression", "Selfharm")),
+    aes(
+      x = Inf, 
+      label = str_glue("*d* = {Mean} (p<sup>d</sup> = {percent(pd, 1)})")
+    ),
+    size = 2.5, hjust = 1,
+    family = Font,
+    fill = NA, label.color = NA,
+    show.legend = FALSE
+  ) +
+  facet_grid2(panel ~ outcome, scales = "free_x", axes = "x") +
+  guides(
+    alpha = "none"
+  ) +
+  theme(
+    legend.position = "right",
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown()
+  )
+```
+
+###### Fitted lines
+
+Plot of fitted lines
+
+```{r}
+# Prediction dataframe: Min and max vals are enough for line
+pred_data <- gbd_wide %>% 
+  filter(country %in% sort(unique(fit_anx$data$country))) %>% 
+  mutate(time = 0) %>% 
+  group_by(country) %>% 
+  mutate(xmin = min(i1_cw, na.rm = TRUE), xmax = max(i1_cw, na.rm = TRUE)) %>% 
+  filter(i1_cw %in% c(xmin, xmax)) %>% 
+  ungroup()
+draws_country_anx <- epred_draws(
+  fit_anx, 
+  pred_data,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region) + 
+    (1 + time*sex + time*age + i1_cw*sex + i1_cw*age | country), 
+  ndraws = 100,
+  resp = "Anxiety"
+)
+
+draws_country_dep <- epred_draws(
+  fit_dep, 
+  pred_data,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region) + 
+    (1 + time*sex + time*age + i1_cw*sex + i1_cw*age | country), 
+  ndraws = 100,
+  resp = "Depression"
+)
+
+draws_country_sel <- epred_draws(
+  fit_sel, 
+  pred_data,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region) + 
+    (1 + time*sex + time*age + i1_cw*sex + i1_cw*age | country), 
+  ndraws = 100,
+  resp = "Selfharm"
+)
+
+pred_data_region <- pred_data %>% 
+  distinct(region, sex, age, i1_cb) %>% 
+  group_by(region) %>% 
+  mutate(i1_cb = mean(i1_cb, na.rm = T)) %>% 
+  crossing(i1_cw = seq(-4, 4, length = 10)) %>% 
+  mutate(time = 0)
+
+draws_region_anx <- epred_draws(
+  fit_anx, 
+  pred_data_region,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region),
+  ndraws = 100,
+  resp = "Anxiety"
+) %>% 
+  mutate(outcome = "Anxiety")
+
+draws_region_dep <- epred_draws(
+  fit_dep, 
+  pred_data_region,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region),
+  ndraws = 100,
+  resp = "Depression"
+) %>% 
+  mutate(outcome = "Depression")
+
+draws_region_sel <- epred_draws(
+  fit_sel, 
+  pred_data_region,
+  re_formula = 
+    ~(1 + time*sex + time*age + i1_cw*sex + i1_cw*age | region),
+  ndraws = 100,
+  resp = "Selfharm"
+) %>% 
+  mutate(outcome = "Self-harm")
+
+means_country <- bind_rows(
+  draws_country_anx %>% mutate(outcome = "Anxiety"),
+  draws_country_dep %>% mutate(outcome = "Depression"),
+  draws_country_sel %>% mutate(outcome = "Self-harm")
+) %>% 
+  group_by(outcome, region, country, i1_cw) %>% 
+  summarise(.epred = mean(.epred))
+
+means_region <- bind_rows(
+  draws_region_anx, draws_region_dep, draws_region_sel
+) %>% 
+  group_by(outcome, region, i1_cw) %>% 
+  mean_qi(.epred, .width = .9)
+
+means_region <- pseudo_gwp %>% 
+  distinct(region, outcome=cause) %>% 
+  bind_rows(means_region) %>% 
+  mutate(outcome = fct_inorder(factor(outcome)))
+
+pseudo_gwp %>% 
+  distinct(region, outcome=cause) %>% 
+  bind_rows(means_country) %>% 
+  mutate(outcome = fct_inorder(factor(outcome))) %>% 
+  ggplot(aes(i1_cw, .epred)) +
+  scale_x_continuous(
+    "Previous year's internet adoption relative to country average in 2000-2020",
+    breaks = c(-3.5, 0, 3.5),
+    labels = function(x) percent(x/10, 1)
+  ) +
+  scale_y_continuous(
+    "Estimated rate or scale score",
+    breaks = pretty_breaks()
+  ) +
+  geom_blank() +
+  geom_ribbon(
+    data = means_region,
+    aes(ymin = .lower, ymax = .upper),
+    alpha = .15, fill = "dodgerblue4"
+  ) +
+  geom_line(
+    data = means_region,
+    col = "dodgerblue4", size = .6
+  ) +
+  geom_line(
+    aes(group = country), 
+    size = .4, alpha = .35, col = "dodgerblue1"
+  ) +
+  # geom_text(
+  #   data = bind_rows(anx_draws, dep_draws, sel_draws) %>% 
+  #     group_by(outcome) %>% 
+  #     summarise(parameters(cur_data()[-c(1:3)])) %>% 
+  #     mutate(region = str_replace(Parameter, "\\.", "\n")) %>% 
+  #     mutate(outcome = if_else(outcome=="Selfharm", "Self-harm", outcome)) %>% 
+  #     filter(region != "Average") %>% 
+  #     mutate(across(where(is.numeric), ~round(., 2))),
+  #   aes(x = -Inf, y = Inf, label = str_glue("{Median}\n[{CI_low}, {CI_high}]")),
+  #   col = "dodgerblue4", size = 2, vjust = 1.1, hjust = -0.1, family = Font
+  # ) +
+facet_grid(outcome~region, scales = "free_y") +
+  theme(panel.spacing = unit(2, "pt"))
+```
