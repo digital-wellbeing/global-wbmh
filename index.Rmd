@@ -61,7 +61,6 @@ library(patchwork)
 library(bayestestR)
 library(lubridate)
 library(haven)
-library(janitor)
 library(broom)
 library(kableExtra)
 library(ggbeeswarm)
@@ -96,6 +95,7 @@ theme_set(
 
 # MCMC settings
 options(brms.backend = "cmdstanr")
+hmc <- list(iter = 2250, warmup = 1000, refresh = 50, d = .9)
 # Run this to delete fitted models and refit
 # unlink(list.files(pattern = "output/brm-.*\\.rds"))
 
@@ -918,17 +918,6 @@ bf_sel <- bf(
   family = gaussian()
 )
 
-bf_time_mv <- bf(
-  mvbind(Depression, Anxiety, Selfharm) ~ 
-    1 + time +
-    (1 + time |c| country) +
-    (1 + time | region),
-  family = gaussian()
-) +
-  bf_int +
-  set_rescor(FALSE)
-
-
 # Fit models
 fit_anx <- brm(
   bf_int + bf_anx + set_rescor(FALSE),
@@ -936,9 +925,9 @@ fit_anx <- brm(
   file = "output/brm-gbd-time-anxiety",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_dep <- brm(
   bf_int + bf_dep + set_rescor(FALSE),
@@ -946,9 +935,9 @@ fit_dep <- brm(
   file = "output/brm-gbd-time-depression",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_sel <- brm(
   bf_int + bf_sel + set_rescor(FALSE),
@@ -956,15 +945,14 @@ fit_sel <- brm(
   file = "output/brm-gbd-time-selfharm",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fits_brm_time_main <- tibble(
   outcome = c("Anxiety", "Depression", "Selfharm"),
   fit = list(fit_anx, fit_dep, fit_sel)
 )
-
 ```
 
 Coefficients
@@ -985,7 +973,7 @@ fits_brm_time_main %>%
   kable_minimal(full_width = FALSE)
 ```
 
-Revisit figure of temporal trends with coefficients
+Revisit figure of temporal trends with coefficients. Note we back-transform the estimated numbers to rates in 100,000
 
 ```{r}
 tmp_pars <- fits_brm_time_main %>% 
@@ -1003,10 +991,11 @@ tmp_pars <- fits_brm_time_main %>%
   ) %>% 
   select(-fit) %>% 
   unnest(out) %>% 
-  # Internet trend is estimated in all models keep first
+  # Internet trend is estimated in all models--keep first
   distinct(Group, Hypothesis, .keep_all = TRUE) %>% 
-  mutate(across(where(is.numeric), ~round(., 3))) %>% 
-  mutate(result = str_glue('**{Estimate}**<br>[{CI.Lower}, {CI.Upper}]')) %>% 
+  # Transform back to rates in 100k
+  mutate(across(where(is.numeric), ~round(.*1000, 0))) %>% 
+  mutate(result = str_glue('**{Estimate}** [{CI.Lower}, {CI.Upper}]')) %>% 
   select(cause = Hypothesis, region = Group, result) %>% 
   mutate(cause = str_sub(cause, 2, -6) %>% str_remove("_time"))
 
@@ -1014,7 +1003,7 @@ p_vars +
   geom_richtext(
     data = tmp_pars %>% mutate(cause = fct_inorder(str_to_title(cause))),
     aes(x = make_date(2000), y = Inf, label = result),
-    size = 2, vjust = .9, hjust = 0.1, color = "dodgerblue4",
+    size = 2.2, vjust = .9, hjust = 0.1, color = "dodgerblue4",
     family = Font,
     fill = NA, label.color = NA
   )
@@ -1221,9 +1210,11 @@ p_cor_country_sel <- draw_scatterplot(
 ```
 
 ```{r}
-p_time_main_correlations <- p_cor_country_anx |
+p_time_main_correlations <- (p_cor_country_anx |
   p_cor_country_dep |
-  p_cor_country_sel
+  p_cor_country_sel) &
+  # Transform to rate in 100k
+  scale_y_continuous(labels = function(x) x*1000)
 
 (wrap_elements(grid::textGrob('Negative experiences\nTBD')) |
     wrap_elements(grid::textGrob('Positive experiences\nTBD')) |
@@ -1520,9 +1511,9 @@ fit_anx <- brm(
   file = "output/brm-gbd-time-anxiety-int2",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_dep <- brm(
   bf_int + bf_dep + set_rescor(FALSE),
@@ -1530,9 +1521,9 @@ fit_dep <- brm(
   file = "output/brm-gbd-time-depression-int2",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_sel <- brm(
   bf_int + bf_sel + set_rescor(FALSE),
@@ -1540,9 +1531,9 @@ fit_sel <- brm(
   file = "output/brm-gbd-time-selfharm-int2",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fits_brm_time_interactions <- tibble(
   outcome = c("Anxiety", "Depression", "Selfharm"),
@@ -1829,35 +1820,35 @@ bf_sel <- bf(
 )
 
 # Fit models in background (need 12 cores)
-job::job({fit_anx <- brm(
+fit_anx <- brm(
   bf_anx,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-anxiety",
   chains = 4,
   cores = 4,
-  iter = 1200, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
-)})
-job::job({fit_dep <- brm(
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
+)
+fit_dep <- brm(
   bf_dep,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-depression",
   chains = 4,
   cores = 4,
-  iter = 1200, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
-)})
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
+)
 fit_sel <- brm(
   bf_sel,
   data = gbd_10,
   file = "output/brm-gbd-time-internet-selfharm",
   chains = 4,
   cores = 4,
-  iter = 1000, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fits_brm_internet_main <- tibble(
   outcome = c("Anxiety", "Depression", "Selfharm"),
@@ -2114,9 +2105,9 @@ fit_anx <- brm(
   file = "output/brm-gbd-time-internet-anxiety-int2",
   chains = 4,
   cores = 4,
-  iter = 1200, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_dep <- brm(
   bf_dep,
@@ -2124,9 +2115,9 @@ fit_dep <- brm(
   file = "output/brm-gbd-time-internet-depression-int2",
   chains = 4,
   cores = 4,
-  iter = 1200, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fit_sel <- brm(
   bf_sel,
@@ -2134,9 +2125,9 @@ fit_sel <- brm(
   file = "output/brm-gbd-time-internet-selfharm-int2",
   chains = 4,
   cores = 4,
-  iter = 1200, warmup = 600, refresh = 10,
-  threads = 1,
-  control = list(adapt_delta = .9)
+  iter = hmc$iter, warmup = hmc$warmup, 
+  refresh = hmc$refresh,
+  control = list(adapt_delta = hmc$d)
 )
 fits_brm_internet_interactions <- tibble(
   outcome = c("Anxiety", "Depression", "Selfharm"),
