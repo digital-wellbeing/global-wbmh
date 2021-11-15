@@ -4,5 +4,6 @@
 .Ruserdata
 
 data/
-data-raw/
+data-raw/*
+!data-raw/Regions/
 output/
