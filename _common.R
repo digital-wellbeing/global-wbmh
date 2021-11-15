@@ -15,10 +15,10 @@ knitr::opts_chunk$set(
 )
 
 # Plotting theme
-library(sysfonts)
 library(ggplot2)
+# Use better font if available
 Font <- "Titillium Web"
-if (!(Font %in% font_families())) font_add_google(Font, Font)
+if (require(extrafont) & !(Font %in% extrafont::fonts())) Font <- ""
 theme_set(
   theme_linedraw(
     base_size = 12,

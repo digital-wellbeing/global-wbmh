@@ -34,37 +34,39 @@ itu <- read_rds("data/itu.rds")
 gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
 ```
 
-## Reshape data for models
+## Prepare data for models
 
-### Create predictors
-
-We then create predictors (centered, lagged, rescaled) for models in the ITU dataset.
+We prepare the predictors
+- center year on 2019 (last year in outcome data)
+- create 1-year lagged internet adoption variables
 
 ```{r}
-# For models, year is centred at 
+# For models, year is centred at 2019
 itu <- itu %>% 
-  mutate(time = (year - 2013) / 10)
+  mutate(year = year - 2019)
 
-# Create predictor: Lagged effect of 10% increase in internet
+# Create lagged predictors
 itu <- itu %>% 
   arrange(country, year) %>% 
   group_by(country) %>% 
-  mutate(i1 = lag(internet*10, 1)) %>% 
-  ungroup()
+  mutate(
+    across(
+      c(internet, fixed, mobile), 
+      list(`1` = ~lag(., 1)), 
+      .names = "{str_sub(.col, 1, 1)}{.fn}"
+    )
+  )
 
 # Centering within and between countries
-itu %>%
-  bmlm::isolate("i1", by = "country", which = "both")
-
-tibble(
-  id = c(1,1,1,2,2,2,3,3,3),
-  x = c(1,2,3,4,5,6,7,8,9)
-) %>% 
-  bmlm::isolate("x", by = "id", which = "both") %>% 
-  group_by(id) %>% 
-  mutate(x_cb2 = mean(x), x_cw2 = x - x_cb2) %>% 
+itu <- itu %>%
+  group_by(country) %>% 
+  mutate(
+    i1_cb = mean(i1_cb), # Country average
+    i1_cw = i1 - i1_cb # Year-specific deviation from country average
+  ) %>% 
   ungroup() %>% 
-  mutate(x_cb2 = x_cb2 - mean(x))
+  # Grand-mean center the country averages
+  mutate(i1_cb = i1_cb - mean(i1))
 ```
 
 ```{r}
@@ -85,13 +87,20 @@ gbd_10 <- gbd_wide %>%
   mutate(internet = if_else(internet == 1, .9999999999, internet))
 ```
 
+Merge tables
+
+```{r}
+dat <- left_join(gbd, itu)
+```
+
+
 ## Model 1: Temporal trends
 
 We then model the mental health and well-being outcomes over time allowing for heterogeneity across locations and demographic groups.
 
-### GBD
+## GBD
 
-#### brms
+### brms
 
 correlating temporal trends in outcomes and internet use using multilevel model with shared correlation matrix
 

@@ -357,9 +357,6 @@ We also join regions to the data.
 # Add regions to data tables
 itu <- left_join(itu, regions)
 gbd <- left_join(gbd, regions)
-
-# Merge data tables
-gbd <- left_join(gbd, itu)
 ```
 
 Our primary analysis is about young people but we also look at older groups for supplemental comparison, so we split data here.
