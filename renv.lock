@@ -1,6 +1,6 @@
 {
   "R": {
-    "Version": "4.1.1",
+    "Version": "4.1.2",
     "Repositories": [
       {
         "Name": "CRAN",
@@ -218,13 +218,6 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "dc5f7a6598bb025d20d66bb758f12879"
-    },
-    "bmlm": {
-      "Package": "bmlm",
-      "Version": "1.3.12",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Hash": "28966ffbbc2330f71242b8df8c6711ab"
     },
     "bookdown": {
       "Package": "bookdown",
@@ -1399,13 +1392,6 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "b227d13e29222b4574486cfcbde077fa"
-    },
-    "sysfonts": {
-      "Package": "sysfonts",
-      "Version": "0.8.5",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Hash": "d5e2db91a3aa1ac242a6edb6b2093eb5"
     },
     "systemfonts": {
       "Package": "systemfonts",
