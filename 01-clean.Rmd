@@ -15,8 +15,11 @@ library(countrycode)
 library(kableExtra)
 library(tidyverse)
 
-# Create directory for intermediate files
+# Create directory for output files (e.g. plots)
 dir.create("output", FALSE)
+
+# Create directory for intermediate data
+dir.create("data", FALSE)
 ```
 
 ## Data cleaning
@@ -25,12 +28,16 @@ We downloaded the relevant data from sources to `data-raw/`. We cannot share the
 
 ### Global Burden of Disease
 
-The Global Burden of Disease data were downloaded from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02 to `data-raw/GBD/gbd-2021-11-02/`. We selected the relevant locations, age groups, years, and causes from the data tool as detailed in the manuscript. Next we load all tables (inside downloaded `.zip` files, there may be more than one depending on size of downloaded table) inside the directory.
+The Global Burden of Disease data were downloaded from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02 to `data-raw/GBD/`. We include those files in the repository as (permitted by the license](http://ghdx.healthdata.org/):
+
+>"Data made available for download by IHME can be used, shared, modified, or built upon by non-commercial users via the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License. Please refer to our terms and conditions for additional details."
+
+We selected the relevant locations, age groups, years, and causes from the data tool as detailed in the manuscript. Next we load all tables (inside downloaded `.zip` files, there may be more than one depending on size of downloaded table) inside the directory.
 
 ```{r gbd-data-load}
 # Load data files and merge to one table
 gbd <- list.files(
-  "data-raw/GBD/gbd-2021-11-02/", 
+  "data-raw/GBD/", 
   pattern = ".zip", full.names = TRUE, recursive = TRUE
 ) %>% 
   read_csv()
@@ -345,32 +352,17 @@ gbd <- left_join(gbd, regions)
 
 # Merge data tables
 gbd <- left_join(gbd, itu)
-
-# Contrast code sex
-gbd$sex <- factor(gbd$sex)
-contrasts(gbd$sex) <- c(-.5, .5)
-
-# Focus on young people
-gbd_all <- gbd
-gbd <- gbd %>% 
-  filter(age %in% c("15 to 19", "20 to 24"))
-
-# Contrast code binary age in young data set
-gbd$age <- factor(gbd$age)
-contrasts(gbd$age) <- c(-.5, .5)
-
-# Young data in wide format
-gbd_wide <- gbd %>%
-  pivot_wider(names_from = cause, values_from = c(val, se))
-names(gbd_wide) <- str_remove(names(gbd_wide), "val_")
-
-# Transform edge proportions to fit beta distribution
-gbd_10 <- gbd_wide %>% 
-  mutate(internet = if_else(internet == 0, .0000000001, internet)) %>% 
-  mutate(internet = if_else(internet == 1, .9999999999, internet))
 ```
 
-We also save a synthetic version of this dataset to better enable others to reproduce our analytical procedures:
+Our primary analysis is about young people but we also look at older groups for supplemental comparison, so we split data here.
+
+```{r}
+gbd_all <- gbd
+gbd <- gbd %>% 
+  filter(age %in% c("10 to 14", "15 to 19", "20 to 24"))
+```
+
+We also save a synthetic version of the gwp dataset to better enable others to reproduce our analytical procedures:
 
 ```{r synth-data-create}
 
@@ -380,3 +372,8 @@ We also save a synthetic version of this dataset to better enable others to repr
 
 We then save the tables for later use in `data/`.
 
+```{r}
+write_rds(gbd, "data/gbd.rds")
+write_rds(gbd_all, "data/gbd_all_ages.rds")
+write_rds(itu, "data/itu.rds")
+```
