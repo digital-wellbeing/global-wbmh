@@ -1,0 +1,265 @@
+# Describe
+
+```{r packages}
+#| results: 'hide'
+# Packages
+library(ggtext)
+library(scales)
+library(patchwork)
+library(lubridate)
+library(kableExtra)
+library(ggstance)
+library(tidyverse)
+```
+
+## Describe
+
+### Internet use trends
+
+```{r}
+itu %>% 
+  filter(year %in% c(2001, 2019)) %>% 
+  select(region, country, year, internet) %>% 
+  pivot_wider(names_from = year, values_from = internet) %>% 
+  select(-country) %>% 
+  tbl_summary(by = region) %>% 
+  add_overall()
+itu %>% 
+  group_by(country) %>% 
+  summarise(x = sum(!is.na(internet))) %>% 
+  arrange(x)
+```
+
+
+```{r}
+# Plot predictors from their own table--values are repeated in data that includes outcomes due to age and sex groups for each year and country
+itu %>% 
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(x = year, y = internet)) +
+  coord_cartesian(ylim = c(0, 1.00)) +
+  scale_y_continuous(
+    "Internet users",
+    breaks = c(0, .25, .5, .75, 1),
+    labels = percent,
+    expand = expansion(c(0.02, 0.1))
+  ) +
+  scale_x_date(
+    breaks = breaks_width("5 years"),
+    labels = label_date("'%y")
+  ) +
+  geom_line(
+    aes(group = country),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line", 
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_wrap(~region, nrow = 1) +
+  theme(legend.position = "none")
+ggsave(
+  "output/Fig-ITU.png", 
+  device = agg_png,
+  height = 600, width = 3200, res = 300, units = "px"
+)
+```
+
+```{r}
+itu %>% 
+  mutate(year = make_date(year)) %>%
+  mutate(mobile = if_else(mobile > 1.50, NaN, mobile)) %>% 
+  pivot_longer(internet:mobile) %>% 
+  mutate(name = str_to_title(name)) %>% 
+  mutate(name = fct_inorder(name)) %>% 
+  ggplot(aes(x = year, y = value)) +
+  # coord_cartesian(ylim = c(0, 1.00)) +
+  scale_y_continuous(
+    "Users or subscriptions",
+    # breaks = c(0, .25, .5, .75, 1),
+    labels = percent,
+    expand = expansion(c(0.025, 0.05))
+  ) +
+  scale_x_date(
+    breaks = breaks_width("5 years"),
+    labels = label_date("'%y")
+  ) +
+  # Ensure all axes go up to 100%
+  geom_blank(
+    data = tibble(
+      region = "Africa", 
+      country = NA, 
+      value = 1, 
+      year = make_date(2001))
+  ) +
+  geom_line(
+    aes(group = country),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line", 
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_grid(name~region, scales = "free_y") +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(2, "pt")
+  )
+```
+
+
+### Mental health
+
+```{r eval = FALSE}
+pa <- gbd %>% 
+  ggplot(aes(year, val, group = country, col = region)) +
+  scale_y_continuous(
+    "Rate in 100 people",
+    breaks = pretty_breaks()
+  ) +
+  scale_x_continuous(
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20")
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .5) +
+  facet_grid(cause~region, scales = "free_y") +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+pb <- gbd %>% 
+  mutate(Group = str_glue("{sex} ({age})")) %>% 
+  ggplot(aes(year, val, col = Group)) +
+  scale_color_brewer(palette = "Paired") +
+  scale_y_continuous(
+    "Rate in 100 people",
+    breaks = pretty_breaks()
+  ) +
+  scale_x_continuous(
+    "Year",
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20")
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .6) +
+  facet_grid(cause~region, scales = "free_y")
+
+p_gbd <- (pa / pb) +
+  plot_annotation(tag_levels = "A")
+
+p_gbd
+ggsave(
+  "output/Fig-GBD.png", 
+  device = agg_png,
+  height = 2400, width = 3600, res = 300, units = "px"
+)
+```
+
+### Multiple lines
+
+Here we create two plots. One to show all main variables' time trends for each region, and country within region. Then, show the outcome time trends for top internet trend in each region. Maybe put first in main text and second in appendix.
+
+First, variables with one region per panel.
+
+```{r}
+# Add pseudo GWP to figure plot out
+pseudo_gwp <-
+  bind_rows(
+    distinct(gbd, region, year) %>% 
+      crossing(
+        cause = fct_inorder(
+          c(
+            "Negative\nexperiences", 
+            "Positive\nexperiences", 
+            "Life\nsatisfaction"
+          )
+        )
+      )
+  )
+p_vars <- bind_rows(
+  pseudo_gwp,
+  gbd %>% 
+    group_by(region, country, year, cause) %>% 
+    summarise(mean = mean(val/100))
+) %>% 
+  ungroup() %>% 
+  mutate(cause = fct_inorder(cause)) %>% 
+  mutate(year = make_date(year)) %>% 
+  ggplot(aes(year, mean)) +
+  scale_color_brewer(
+    "Variable",
+    palette = "Set1", direction = -1
+  ) +
+  scale_y_continuous(
+    "Rate or scale score",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country, cause)), 
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line", 
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_grid(cause~region, scales = "free_y") +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(2, "pt")
+  )
+p_vars
+ggsave(
+  "output/Fig-vars-timeseries.png", 
+  device = agg_png,
+  height = 2400, width = 3600, res = 300, units = "px"
+)
+```
+
+```{r}
+# Get top 1 internet trend country in each region
+top_trends <- gbd %>% 
+  semi_join(distinct(itu, country)) %>% 
+  group_by(region, country) %>% 
+  summarise(tidy(lm(internet ~ time, data = cur_data_all()))) %>% 
+  filter(term == "time") %>% 
+  group_by(region) %>% 
+  slice_max(order_by = estimate, n = 1)
+pb <- gbd %>% 
+  filter(country %in% top_trends$country) %>%
+  mutate(country = factor(country, levels = top_trends$country)) %>% 
+  mutate(Group = str_glue("{sex} ({age})")) %>% 
+  mutate(year = make_date(year)) %>% 
+  ggplot(aes(year, val/100, col = Group)) +
+  scale_color_brewer(palette = "Paired") +
+  scale_y_continuous(
+    "Rate",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
+  ) +
+  stat_summary(fun = mean, geom = "line", size = .6) +
+  facet_grid(cause~country, scales = "free_y")
+
+(pa + theme(axis.title.x = element_blank())) / 
+  pb * 
+  theme(panel.spacing = unit(2, "pt")) +
+  plot_layout(heights = c(4, 3)) +
+  plot_annotation(tag_levels = "A")
+ggsave(
+  "output/Fig-all-vars-timeseries.png", 
+  device = agg_png,
+  height = 2400, width = 3600, res = 300, units = "px"
+)
+```
+
+

@@ -1,0 +1,382 @@
+# Clean and prepare
+
+## Settings
+
+We first load the required R packages and set some options for the resulting document.
+
+```{r packages}
+#| results: 'hide'
+# Packages
+library(readxl)
+library(imputeTS)
+library(naniar)
+library(janitor)
+library(countrycode)
+library(kableExtra)
+library(tidyverse)
+
+# Create directory for intermediate files
+dir.create("output", FALSE)
+```
+
+## Data cleaning
+
+We downloaded the relevant data from sources to `data-raw/`. We cannot share the data here but indicate below how and when each data table was obtained. 
+
+### Global Burden of Disease
+
+The Global Burden of Disease data were downloaded from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02 to `data-raw/GBD/gbd-2021-11-02/`. We selected the relevant locations, age groups, years, and causes from the data tool as detailed in the manuscript. Next we load all tables (inside downloaded `.zip` files, there may be more than one depending on size of downloaded table) inside the directory.
+
+```{r gbd-data-load}
+# Load data files and merge to one table
+gbd <- list.files(
+  "data-raw/GBD/gbd-2021-11-02/", 
+  pattern = ".zip", full.names = TRUE, recursive = TRUE
+) %>% 
+  read_csv()
+```
+
+We then ensure that the correct variables were downloaded, and then clean this data.
+
+```{r gbd-data-clean}
+# Cleaning
+
+# First step is to clean names in all data sets
+gbd <- clean_names(gbd)
+
+# Confirm that correct measures were downloaded:
+# - prevalence: Total number of cases
+# - rate: Total cases per 100,000 population
+#   - We convert this to a percentage
+# distinct(gbd, measure, metric)
+gbd <- select(gbd, -metric, -measure)
+gbd <- gbd %>% 
+  mutate(across(c(val, upper, lower), ~.x/1000))
+
+# Clean cause names
+# distinct(gbd, cause)
+gbd <- gbd %>% 
+  mutate(
+    cause = case_when(
+      cause == "Anxiety disorders" ~ "Anxiety",
+      cause == "Depressive disorders" ~ "Depression",
+      cause == "Self-harm" ~ "Selfharm"
+    )
+  )
+
+# Harmonise variable names with other datasets
+gbd <- gbd %>% 
+  rename(country = location)
+
+# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions).We convert those to normal approximate standard errors.
+gbd <- gbd %>% 
+  mutate(se = (upper-lower) / (1.96*2)) %>%
+  select(-c(upper, lower))
+```
+
+Then we need to harmonise to country names (always somewhat idiosyncratic) to a common metric. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. There is a harmonised name for each GBD country, and 27 country names are harmonised.
+
+```{r gbd-harmonise-countries}
+# Check what names were changed and if any don't have harmonised counterpart
+gbd %>%
+  distinct(country) %>% 
+  arrange(country) %>%
+  mutate(
+    country_harmonised = countryname(country, destination = "cldr.short.en")
+  ) %>% 
+  filter(country != country_harmonised | is.na(country_harmonised)) %>% 
+  kbl() %>% 
+  kable_minimal(full_width = FALSE) %>% 
+  scroll_box(width = "500px", height = "400px")
+# Harmonise old names after verifying above that none are dropped
+gbd <- gbd %>% 
+  mutate(country = countryname(country, destination = "cldr.short.en"))
+```
+
+### Gallup World Poll
+
+GWP cleaning goes here.
+
+### International Telecommunication Union
+
+The internet adoption data were downloaded from the ITU website in October 2021, and placed with their original file names to `data-raw/ITU/`. The specific URLs for obtaining the data files are
+
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/PercentIndividualsUsingInternet.xlsx>
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx>
+- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx>
+
+We first load, reshape, and merge these datasets.
+
+```{r itu-load-clean}
+# Read and reshape fixed broadband data
+itu_fixed <- read_xlsx(
+  "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx", 
+  sheet = 2,
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("year", "variable")) %>% 
+  pivot_wider(names_from = variable) %>% 
+  mutate(fixed = as.numeric(value)) %>% 
+  select(country = Country, year, fixed)
+
+# Read and reshape mobile broadband data
+itu_mobile <- read_xlsx(
+  "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx", 
+  sheet = 2,
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("year", "variable")) %>% 
+  pivot_wider(names_from = variable) %>% 
+  mutate(mobile = as.numeric(value)) %>% 
+  select(country = Country, year, mobile)
+
+# Percent using internet
+itu_percent <- read_xlsx(
+  "data-raw/ITU/PercentIndividualsUsingInternet.xlsx",
+  col_types = "text"
+) %>% 
+  pivot_longer(-c(Indicator, Country)) %>% 
+  separate(name, into = c("year", "variable")) %>% 
+  pivot_wider(names_from = variable) %>% 
+  mutate(internet = as.numeric(value)) %>% 
+  select(country = Country, year, internet)
+
+# Merge to one table in wide format (oldest on left to include all years)
+itu <- reduce(list(itu_percent, itu_fixed, itu_mobile), left_join)
+
+# values (1-100) to proportions (0-1) and years to numbers
+itu <- itu %>% 
+  mutate(across(c(internet, fixed, mobile), function(x) x/100)) %>% 
+  mutate(year = as.numeric(year))
+
+# Drop tables
+rm(itu_fixed, itu_mobile, itu_percent)
+```
+
+Then harmonise country names as above, and drop countries that don't exist in outcomes.
+
+```{r itu-harmonise-countries}
+# Check what names were changed and if any don't have harmonised counterpart
+itu %>%
+  distinct(country) %>% 
+  arrange(country) %>%
+  mutate(
+    country_harmonised = countryname(country, destination = "cldr.short.en")
+  ) %>% 
+  filter(country != country_harmonised | is.na(country_harmonised)) %>% 
+  kbl() %>% 
+  kable_minimal(full_width = FALSE) %>% 
+  scroll_box(width = "500px", height = "400px")
+
+# Harmonise old names after verifying above that none are dropped
+itu <- itu %>% 
+  mutate(country = countryname(country, destination = "cldr.short.en"))
+
+# These countries don't exist in outcomes
+itu %>%
+  distinct(country) %>% 
+  anti_join(distinct(gbd, country)) %>% 
+  kbl() %>% 
+  kable_minimal(full_width = FALSE) %>% 
+  scroll_box(width = "500px", height = "400px")
+
+# Drop them
+itu <- itu %>% 
+  filter(country %in% unique(gbd$country))
+```
+
+#### Missingness
+
+Remove countries with no observations
+
+```{r}
+itu <- itu %>% 
+  group_by(country) %>% 
+  mutate(nobs = sum(!is.na(internet))) %>% 
+  ungroup() %>% 
+  filter(nobs > 0) %>% 
+  select(-nobs)
+```
+
+There are some missing values in the data; in the Internet variable these are mainly in the first or last years of each country's time-series. This needs to be changed to calculate by-variable (with appropriate time-spans) when adding mobile and fixed
+
+```{r}
+miss_var_summary(itu)
+```
+
+We then impute missing values to the internet adoption timeseries. We use linear interpolation to fill missing intermediate values, but do not extrapolate before or after the first and last values.
+
+```{r itu-impute}
+itu <- itu %>% 
+  group_by(country) %>% 
+  # Find first and last year with internet data in each country
+  mutate(
+    min_year = year[min(which(!is.na(internet)))],
+    max_year = year[max(which(!is.na(internet)))]
+  ) %>%
+  # Interpolate values linearly
+  # use possibly() to avoid errors for countries with no data
+  # Add variables to c() to impute for fixed and mobile broadband
+  mutate(
+    across(
+      c(internet), 
+      possibly(
+        function(x) na_interpolation(x, maxgap = Inf), 
+        # If function errors, provide original internet value
+        otherwise = internet
+      )
+    )
+  ) %>% 
+  # Take out projected (non-intermediate) imputed values
+  mutate(
+    internet = if_else(
+      between(year, unique(min_year), unique(max_year)), 
+      internet, 
+      NaN
+    )
+  ) %>% 
+  ungroup() %>% 
+  select(-min_year, -max_year)
+```
+
+We see that 96 intermediate internet use values were imputed to the time series.
+
+```{r}
+miss_var_summary(itu)
+```
+
+### Complete study dataset
+
+#### GLOBE regions
+
+We group the countries into GLOBE regions in order to have a higher level of grouping at which the analyses can be summarised. This allows us to eg. present figures and tables per region, instead of overwhelmingly by country, and also provides an upper level for the multilevel models. We use the extended GLOBE regions following Jebb et al. (2020), and had to manually add labels to some countries that were not grouped in those studies.
+
+```{r}
+regions <- read_csv(
+  "data-raw/Regions/GLOBE-regions-from-Jebb-et-al-2020.csv"
+) %>% 
+  # Jebb et al used * to indicate deviance from GLOBE, remove
+  mutate(country = str_remove_all(country, "\\*")) %>% 
+  # Standardize country names
+  # This drops Nagorno-Karabakh Republic
+  mutate(country = countryname(country)) %>% 
+  drop_na(country)
+
+# This also combined Swaziland and (Eswatini) to Eswatini, and Northern- and Cyprus. Therefore we just take the distinct country & region.
+regions <- distinct(regions, region, country)
+
+# Countries in our dataset not present in region data
+filter(
+  distinct(gbd, country), 
+  !(country %in% unique(regions$country))
+) %>% 
+  arrange(country) %>% 
+  write_csv("data-raw/Regions/GBD-countries-without-region.csv")
+
+# I then filled missing regions in Jebb et al and extended GLOBE referenced therein
+
+# Load our manually filled region data
+regions_filled <- read_csv(
+  "data-raw/Regions/GBD-countries-without-region-filled.csv"
+) 
+```
+
+We then combine all the region tables, clean region names, and join to our data
+
+```{r}
+# Combine Jebb et al GLOBE regions and our manually added ones
+regions <- regions %>% 
+  bind_rows(
+    regions_filled %>% 
+      mutate(Note = "Filled")
+  ) %>% 
+  arrange(region, country)
+
+# Shorter name for plots
+regions <- regions %>% 
+  mutate(region = if_else(region=="Sub-Sahara Africa", "Africa", region))
+
+# Format regions to factors and use line breaks instead of spaces
+regions$region <- factor(regions$region)
+levels(regions$region) <- str_replace_all(levels(regions$region), " ", "\n")
+
+# Display table of regions and countries
+regions %>% 
+  kbl(caption = "All countries and regions.") %>% 
+  kable_minimal(full_width = FALSE) %>% 
+  scroll_box(width = "500px", height = "400px")
+
+regions <- select(regions, -Note)
+```
+
+#### Create predictors
+
+We then create predictors (centered, lagged, rescaled) for models in the ITU dataset.
+
+```{r}
+# For models, we rescale year; centred at 2013 and one unit indicates decade
+itu <- itu %>% 
+  mutate(time = (year - 2013) / 10)
+
+# Create predictor: Lagged effect of 10% increase in internet
+itu <- itu %>% 
+  arrange(country, year) %>% 
+  group_by(country) %>% 
+  mutate(i1 = lag(internet*10, 1)) %>% 
+  ungroup()
+
+# Centering within and between countries
+itu <- itu %>%
+  bmlm::isolate("i1", by = "country", which = "both")
+```
+
+#### Create tables
+
+Here, we join the ITU table to the GBD table. Note this appropriately duplicates the country-specific predictor values to the demographic groups within each country. We then create a table specific to young people. 
+
+We also join regions to the data.
+
+```{r}
+# Add regions to data tables
+itu <- left_join(itu, regions)
+gbd <- left_join(gbd, regions)
+
+# Merge data tables
+gbd <- left_join(gbd, itu)
+
+# Contrast code sex
+gbd$sex <- factor(gbd$sex)
+contrasts(gbd$sex) <- c(-.5, .5)
+
+# Focus on young people
+gbd_all <- gbd
+gbd <- gbd %>% 
+  filter(age %in% c("15 to 19", "20 to 24"))
+
+# Contrast code binary age in young data set
+gbd$age <- factor(gbd$age)
+contrasts(gbd$age) <- c(-.5, .5)
+
+# Young data in wide format
+gbd_wide <- gbd %>%
+  pivot_wider(names_from = cause, values_from = c(val, se))
+names(gbd_wide) <- str_remove(names(gbd_wide), "val_")
+
+# Transform edge proportions to fit beta distribution
+gbd_10 <- gbd_wide %>% 
+  mutate(internet = if_else(internet == 0, .0000000001, internet)) %>% 
+  mutate(internet = if_else(internet == 1, .9999999999, internet))
+```
+
+We also save a synthetic version of this dataset to better enable others to reproduce our analytical procedures:
+
+```{r synth-data-create}
+
+```
+
+## Save tables
+
+We then save the tables for later use in `data/`.
+
