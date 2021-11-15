@@ -10,6 +10,7 @@ We first load the required R packages and set some options for the resulting doc
 library(readxl)
 library(imputeTS)
 library(naniar)
+library(scales)
 library(janitor)
 library(countrycode)
 library(kableExtra)
@@ -22,11 +23,7 @@ dir.create("output", FALSE)
 dir.create("data", FALSE)
 ```
 
-## Data cleaning
-
-We downloaded the relevant data from sources to `data-raw/`. We cannot share the data here but indicate below how and when each data table was obtained. 
-
-### Global Burden of Disease
+## Global Burden of Disease
 
 The Global Burden of Disease data were downloaded from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02 to `data-raw/GBD/`. We include those files in the repository as (permitted by the license](http://ghdx.healthdata.org/):
 
@@ -100,21 +97,36 @@ gbd <- gbd %>%
   mutate(country = countryname(country, destination = "cldr.short.en"))
 ```
 
-### Gallup World Poll
+## Gallup World Poll
 
 GWP cleaning goes here.
 
-### International Telecommunication Union
+## International Telecommunication Union
 
-The internet adoption data were downloaded from the ITU website in October 2021, and placed with their original file names to `data-raw/ITU/`. The specific URLs for obtaining the data files are
+We first download the data files from the ITU website (in November 2021). Note that new versions may be posted subsequent to this, in which case the URLs would change and should then be changed here too to update the analyses with latest data.
 
-- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/PercentIndividualsUsingInternet.xlsx>
-- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx>
-- <https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx>
+```{r itu-download}
+# Download data sets from the ITU website if not yet downloaded
+if (!file.exists("data-raw/ITU/PercentIndividualsUsingInternet.xlsx")) {
+  dir.create("data-raw/ITU")
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/PercentIndividualsUsingInternet_Nov2021.xlsx", 
+    "data-raw/ITU/PercentIndividualsUsingInternet.xlsx"
+  )
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx",
+    "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx"
+  )
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx",
+    "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx"
+  )
+}
+```
 
-We first load, reshape, and merge these datasets.
+We then read and reshape the ITU data
 
-```{r itu-load-clean}
+```{r itu-clean}
 # Read and reshape fixed broadband data
 itu_fixed <- read_xlsx(
   "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx", 
@@ -194,7 +206,7 @@ itu <- itu %>%
   filter(country %in% unique(gbd$country))
 ```
 
-#### Missingness
+### Missingness
 
 Remove countries with no observations
 
@@ -207,40 +219,40 @@ itu <- itu %>%
   select(-nobs)
 ```
 
-There are some missing values in the data; in the Internet variable these are mainly in the first or last years of each country's time-series. This needs to be changed to calculate by-variable (with appropriate time-spans) when adding mobile and fixed
-
-```{r}
-miss_var_summary(itu)
-```
-
-We then impute missing values to the internet adoption timeseries. We use linear interpolation to fill missing intermediate values, but do not extrapolate before or after the first and last values.
+We then impute missing values to the internet adoption timeseries. We use linear interpolation to fill missing intermediate values, but do not extrapolate before or after the first and last values of each country.
 
 ```{r itu-impute}
-itu <- itu %>% 
-  group_by(country) %>% 
-  # Find first and last year with internet data in each country
+# Reshape to easily impute all variables
+itu_long <- itu %>%
+  pivot_longer(c(internet, fixed, mobile))
+
+# Impute by country and variable
+itu_long <- itu_long %>%
+  group_by(country, name) %>% 
+  # Find first and last year with this variable in each country
+  # so as to prevent extrapolation
   mutate(
-    min_year = year[min(which(!is.na(internet)))],
-    max_year = year[max(which(!is.na(internet)))]
+    min_year = year[min(which(!is.na(value)))],
+    max_year = year[max(which(!is.na(value)))]
   ) %>%
   # Interpolate values linearly
   # use possibly() to avoid errors for countries with no data
-  # Add variables to c() to impute for fixed and mobile broadband
   mutate(
     across(
-      c(internet), 
-      possibly(
-        function(x) na_interpolation(x, maxgap = Inf), 
-        # If function errors, provide original internet value
-        otherwise = internet
+      value, 
+      .fns = list(
+        i = possibly(
+          function(x) na_interpolation(x, maxgap = Inf), 
+          otherwise = NaN
+        )
       )
     )
   ) %>% 
   # Take out projected (non-intermediate) imputed values
   mutate(
-    internet = if_else(
+    value_i = if_else(
       between(year, unique(min_year), unique(max_year)), 
-      internet, 
+      value_i, 
       NaN
     )
   ) %>% 
@@ -248,15 +260,32 @@ itu <- itu %>%
   select(-min_year, -max_year)
 ```
 
-We see that 96 intermediate internet use values were imputed to the time series.
+Here is a summary of how many values were imputed
 
 ```{r}
-miss_var_summary(itu)
+itu_long %>%   
+  group_by(name) %>% 
+  mutate(min_year = if_else(name == "mobile", 2007, 2000)) %>% 
+  summarise(
+    n_miss_orig = sum(is.na(value) & year >= min_year),
+    p_miss_orig = percent(n_miss_orig / sum(year >= min_year), .1),
+    n_miss_imp = sum(is.na(value_i) & year >= min_year),
+    p_miss_imp = percent(n_miss_imp / sum(year >= min_year), .1),
+    imputed = n_miss_orig - n_miss_imp
+  )
 ```
 
-### Complete study dataset
+We then replace the original values with the imputed ones
 
-#### GLOBE regions
+```{r}
+itu <- itu_long %>% 
+  mutate(value = value_i) %>% 
+  select(-value_i) %>% 
+  pivot_wider()
+rm(itu_long)
+```
+
+## GLOBE regions
 
 We group the countries into GLOBE regions in order to have a higher level of grouping at which the analyses can be summarised. This allows us to eg. present figures and tables per region, instead of overwhelmingly by country, and also provides an upper level for the multilevel models. We use the extended GLOBE regions following Jebb et al. (2020), and had to manually add labels to some countries that were not grouped in those studies.
 
@@ -286,7 +315,7 @@ filter(
 
 # Load our manually filled region data
 regions_filled <- read_csv(
-  "data-raw/Regions/GBD-countries-without-region-filled.csv"
+  "data-raw/Regions/ITU-countries-without-region-filled.csv"
 ) 
 ```
 
@@ -318,28 +347,7 @@ regions %>%
 regions <- select(regions, -Note)
 ```
 
-#### Create predictors
-
-We then create predictors (centered, lagged, rescaled) for models in the ITU dataset.
-
-```{r}
-# For models, we rescale year; centred at 2013 and one unit indicates decade
-itu <- itu %>% 
-  mutate(time = (year - 2013) / 10)
-
-# Create predictor: Lagged effect of 10% increase in internet
-itu <- itu %>% 
-  arrange(country, year) %>% 
-  group_by(country) %>% 
-  mutate(i1 = lag(internet*10, 1)) %>% 
-  ungroup()
-
-# Centering within and between countries
-itu <- itu %>%
-  bmlm::isolate("i1", by = "country", which = "both")
-```
-
-#### Create tables
+## Join tables
 
 Here, we join the ITU table to the GBD table. Note this appropriately duplicates the country-specific predictor values to the demographic groups within each country. We then create a table specific to young people. 
 
@@ -360,12 +368,6 @@ Our primary analysis is about young people but we also look at older groups for 
 gbd_all <- gbd
 gbd <- gbd %>% 
   filter(age %in% c("10 to 14", "15 to 19", "20 to 24"))
-```
-
-We also save a synthetic version of the gwp dataset to better enable others to reproduce our analytical procedures:
-
-```{r synth-data-create}
-
 ```
 
 ## Save tables

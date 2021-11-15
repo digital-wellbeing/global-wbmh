@@ -29,132 +29,67 @@ hmc <- list(iter = 2250, warmup = 1000, refresh = 50, d = .9)
 # unlink(list.files(pattern = "output/brm-.*\\.rds"))
 ```
 
+```{r}
+itu <- read_rds("data/itu.rds")
+gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
+```
+
+## Reshape data for models
+
+### Create predictors
+
+We then create predictors (centered, lagged, rescaled) for models in the ITU dataset.
+
+```{r}
+# For models, year is centred at 
+itu <- itu %>% 
+  mutate(time = (year - 2013) / 10)
+
+# Create predictor: Lagged effect of 10% increase in internet
+itu <- itu %>% 
+  arrange(country, year) %>% 
+  group_by(country) %>% 
+  mutate(i1 = lag(internet*10, 1)) %>% 
+  ungroup()
+
+# Centering within and between countries
+itu %>%
+  bmlm::isolate("i1", by = "country", which = "both")
+
+tibble(
+  id = c(1,1,1,2,2,2,3,3,3),
+  x = c(1,2,3,4,5,6,7,8,9)
+) %>% 
+  bmlm::isolate("x", by = "id", which = "both") %>% 
+  group_by(id) %>% 
+  mutate(x_cb2 = mean(x), x_cw2 = x - x_cb2) %>% 
+  ungroup() %>% 
+  mutate(x_cb2 = x_cb2 - mean(x))
+```
+
+```{r}
+# Contrast code sex
+gbd$sex <- factor(gbd$sex)
+contrasts(gbd$sex) <- c(-.5, .5)
+
+# [todo] set mid age category as reference
+
+# GBD in wide format
+gbd_wide <- gbd %>%
+  pivot_wider(names_from = cause, values_from = c(val, se))
+names(gbd_wide) <- str_remove(names(gbd_wide), "val_")
+
+# Transform edge proportions to fit beta distribution
+gbd_10 <- gbd_wide %>% 
+  mutate(internet = if_else(internet == 0, .0000000001, internet)) %>% 
+  mutate(internet = if_else(internet == 1, .9999999999, internet))
+```
+
 ## Model 1: Temporal trends
 
 We then model the mental health and well-being outcomes over time allowing for heterogeneity across locations and demographic groups.
 
-We first fit the models using lme4 because they are big and therefore would be very slow with brms.
-
 ### GBD
-
-#### lme4
-
-```{r fit-gbd-time-lme4}
-# These take about 5-20 minutes each
-# run in parallel in background jobs
-# recommended to conduct this in interactive mode (rstudio)
-file_path <- "output/lme4-gbd-time.rds"
-if (!file.exists(file_path)) {
-  library(job)
-  job({fit_anx <- lmer(
-    Anxiety ~ 1 + time * sex * age + 
-      (1 + time * sex * age | region) +
-      (1 + time * sex * age | country),
-    data = gbd_wide
-  )}, title = "Anxiety time (lmer)")
-  job({fit_dep <- lmer(
-    Depression ~ 1 + time * sex * age + 
-      (1 + time * sex * age | region) +
-      (1 + time * sex * age | country),
-    data = gbd_wide
-  )}, title = "Depression time (lmer)")
-  job({fit_sel <- lmer(
-    Selfharm ~ 1 + time * sex * age + 
-      (1 + time * sex * age | region) +
-      (1 + time * sex * age | country),
-    data = gbd_wide
-  )}, title = "Self harm time (lmer)")
-  fits_lmer <- distinct(gbd, cause) %>% 
-    mutate(fit = list(fit_anx, fit_dep, fit_sel))
-  write_rds(fits_lmer, file_path)
-} else {fits_lmer <- read_rds(file_path)}
-```
-
-Plot fixed effects and by demographic
-
-```{r}
-# Fixed effects parameters
-fixed_effects <- fits_lmer %>% 
-  mutate(out = map(fit, ~tidy(., conf.int = TRUE))) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  standardize_names() %>% 
-  as_tibble() %>% 
-  filter(
-    Effects == "fixed", 
-    Parameter != "(Intercept)"
-  ) 
-# Fixed effects per demographic
-fixed_effects_demographics <- fits_lmer %>% 
-  mutate(
-    out = map(
-      fit,
-      ~emtrends(.x, var = "time", by = c("sex", "age")) %>% 
-        parameters() %>% 
-        as.data.frame()
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  standardize_names() %>% 
-  as_tibble() %>% 
-  mutate(Parameter = str_glue("{sex}\n({age})"))
-
-# Random effects parameters
-random_effects <- fits_lmer %>% 
-  mutate(
-    coef_region = map(
-      fit, 
-      ~bind_rows(
-        coef(.x)$region %>% 
-          as.data.frame() %>% 
-          rownames_to_column("region"),
-        coef(.x)$country %>% 
-          as.data.frame() %>% 
-          rownames_to_column("country"),
-        .id = "cluster"
-      ) %>% 
-        mutate(cluster = factor(cluster, labels = c("region", "country")))
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(coef_region) %>% 
-  mutate(Type = "Effects") %>%
-  select(-`(Int      ,nc ercept)`)
-
-bind_rows(
-  fixed_effects,
-  fixed_effects_demographics, 
-  .id = "Type"
-) %>% 
-  mutate(Type = factor(Type, labels = c("Effects", "Time by demographic"))) %>% 
-  mutate(Parameter = fct_inorder(Parameter)) %>%
-  mutate(cause = factor(cause)) %>% 
-  rowwise() %>% 
-  mutate(
-    sig = factor(
-      !between(0, CI_low, CI_high), 
-      levels = c(TRUE, FALSE)
-    )
-  ) %>% 
-  ggplot(aes(Coefficient, Parameter, col = cause, shape = sig)) +
-  scale_color_discrete(
-    "Outcome"
-  ) +
-  scale_x_continuous(
-    "Estimate (95%CI)"
-  ) +
-  scale_shape_manual(values = c(19, 21)) +
-  geom_vline(xintercept = 0, size = .2, alpha = .2) +
-  geom_pointrangeh(
-    aes(xmin = CI_low, xmax = CI_high),
-    position = position_dodge2v(.5),
-    fill = "white", size = .3, fatten = 5
-  ) +
-  guides(shape = "none") +
-  facet_wrap("Type", ncol = 2, scales = "free") +
-  theme(axis.title.y = element_blank())
-```
 
 #### brms
 
@@ -203,6 +138,8 @@ i_{i[c][r]} &\sim
 )
 \end{align*}
 $$
+
+[todo] only pick the itu data for the internet model
 
 ```{r}
 # Define a model of internet proportion over time

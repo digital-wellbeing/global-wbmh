@@ -12,9 +12,12 @@ library(ggstance)
 library(tidyverse)
 ```
 
-## Describe
+```{r}
+itu <- read_rds("data/itu.rds")
+gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
+```
 
-### Internet use trends
+## Internet use trends
 
 ```{r}
 itu %>% 
@@ -106,8 +109,7 @@ itu %>%
   )
 ```
 
-
-### Mental health
+## Mental health
 
 ```{r eval = FALSE}
 pa <- gbd %>% 
@@ -153,7 +155,7 @@ ggsave(
 )
 ```
 
-### Multiple lines
+## Multiple lines
 
 Here we create two plots. One to show all main variables' time trends for each region, and country within region. Then, show the outcome time trends for top internet trend in each region. Maybe put first in main text and second in appendix.
 

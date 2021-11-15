@@ -6,6 +6,10 @@
 
 ```
 
+```{r}
+gbd <- read_rds("data/gbd.rds")
+```
+
 ##### Internet: Main effects
 
 ```{r}
