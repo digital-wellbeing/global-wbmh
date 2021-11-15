@@ -8,3 +8,5 @@ data-raw/*
 !data-raw/Regions/
 !data-raw/GBD/
 output/
+docs/
+_bookdown_files/
