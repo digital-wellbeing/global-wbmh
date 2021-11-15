@@ -1,14 +1,16 @@
 ---
-title: "Global study of well-being and internet adoption | Online analysis supplement"
+title: Global study of well-being and internet adoption | Online analysis supplement
 description: |
   Online analysis supplement for "A global study of adolescents’ digital technology adoption and its associations with well-being and mental health" (Vuorre and Przybylski, in prep)
-author: "<a href='https://vuorre.netlify.app'>Matti Vuorre</a> & Andy Przybylski"
+author: Matti Vuorre & Andy Przybylski
 date: "`r Sys.Date()`"
 site: bookdown::bookdown_site
 output: bookdown::bs4_book
 url: https://digital-wellbeing.github.io/global-wbmh
 biblio-style: apalike
 ---
+
+# Preface
 
 This repository ([GitHub](https://github.com/digital-wellbeing/global-wbmh) / [OSF](https://osf.io/ys7m9/)) contains the code and synthetic datasets required to reproduce all analyses reported in our manuscript, *A global study of the association between internet adoption and adolescent mental health and well-being* (Vuorre & Przybylski, in preparation). These analyses are presented in the [Online analysis supplement](https://digital-wellbeing.github.io/global-wbmh).
 
