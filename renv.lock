@@ -4,7 +4,11 @@
     "Repositories": [
       {
         "Name": "CRAN",
-        "URL": "https://cran.rstudio.com"
+        "URL": "https://cloud.r-project.org"
+      },
+      {
+        "Name": "cmdstanr",
+        "URL": "https://mc-stan.org/r-packages"
       }
     ]
   },
@@ -309,6 +313,14 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "ebaa97ac99cc2daf04e77eecc7b781d7"
+    },
+    "cmdstanr": {
+      "Package": "cmdstanr",
+      "Version": "0.4.0",
+      "Source": "Repository",
+      "Repository": "cmdstanr",
+      "Remotes": "stan-dev/posterior",
+      "Hash": "039037e8fb6be7a0312ebd1204370000"
     },
     "coda": {
       "Package": "coda",
@@ -1395,10 +1407,15 @@
     },
     "systemfonts": {
       "Package": "systemfonts",
-      "Version": "1.0.3",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Hash": "5be9fcf8ef6763e8cb13ab009e273a1d"
+      "Version": "1.0.3.9000",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteRepo": "systemfonts",
+      "RemoteUsername": "r-lib",
+      "RemoteRef": "HEAD",
+      "RemoteSha": "881a6745d1fd56961dff7f808577bd5dba4c6328",
+      "Hash": "0df853618332a3cf0d0d91bbc8d60a97"
     },
     "tensorA": {
       "Package": "tensorA",
