@@ -373,6 +373,25 @@ f1d %>%
   )
 ```
 
+```{r}
+pp_check(
+  fits_1c$fit[[1]], 
+  ndraws = 30, 
+  resp = "internet", 
+  newdata = fits_1c$fit[[1]]$data
+  )
+
+pp_check(
+  fits_1c$fit[[1]], 
+  ndraws = 10, 
+  type = "dens_overlay_grouped",
+  group = "region",
+  resp = "val", 
+  newdata = fits_1c$fit[[1]]$data
+)
+```
+
+
 ### Summary
 
 We then display the model's population-level parameters
@@ -415,7 +434,6 @@ fits_1 %>%
 ### Figure: Timecourses and parameters
 
 ```{r}
-
 tmp_coefs <- fits_1c %>% 
   mutate(
     out = map(
@@ -492,7 +510,7 @@ dat_all %>%
   geom_richtext(
     data = tmp_coefs %>% mutate(cause = fct_inorder(str_to_title(cause))),
     aes(x = make_date(2000), y = Inf, label = result),
-    size = 2.2, vjust = .9, hjust = 0.1, color = "dodgerblue4",
+    size = 2.4, vjust = .9, hjust = 0.05, color = "dodgerblue4",
     family = Font,
     fill = NA, label.color = NA
   )
@@ -587,7 +605,7 @@ draw_scatterplot <- function(fit, beta, r_region, r_country, sd_country, cor_cou
     ggplot(aes(internet, outcome)) +
     geom_path(
       data = country_ellipse,
-      aes(x = x, y = y), 
+      aes(x = x, y = y, group = .draw), 
       alpha = .2, size = .1, col = "dodgerblue1"
     ) +
     geom_vline(xintercept = 0, lty = 2, size = .2) +
@@ -610,281 +628,17 @@ draw_scatterplot <- function(fit, beta, r_region, r_country, sd_country, cor_cou
 ```
 
 ```{r}
-draw_scatterplot(fits_1c$fit[[1]]) + labs(y = "Anxiety trend")
-draw_scatterplot(fits_1c$fit[[2]]) + labs(y = "Depression trend")
-draw_scatterplot(fits_1c$fit[[3]]) + labs(y = "Self-harm trend")
+p1 <- draw_scatterplot(fits_1c$fit[[1]]) + labs(y = "Anxiety trend")
+p2 <- draw_scatterplot(fits_1c$fit[[2]]) + labs(y = "Depression trend")
+p3 <- draw_scatterplot(fits_1c$fit[[3]]) + labs(y = "Self-harm trend")
 ```
 
 ```{r}
-p_time_main_correlations <- (p_cor_country_anx |
-                               p_cor_country_dep |
-                               p_cor_country_sel)
-
 (wrap_elements(grid::textGrob('Negative experiences\nTBD')) |
     wrap_elements(grid::textGrob('Positive experiences\nTBD')) |
     wrap_elements(grid::textGrob('Life satisfaction\nTBD'))) /
-  p_time_main_correlations
-
-p_time_main_coefs /
-  p_time_main_correlations
+  (p1 | p2 | p3)
 ```
-
-
-```{r time-correlation-depression}
-# Get average and region
-r_region_depression <- fit_dep %>% 
-  spread_draws(
-    b_Depression_time, 
-    b_internet_time,
-    r_region__Depression[region, term],
-    r_region__internet[region, term]
-  ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by replacing dot with line break
-  mutate(region = str_replace(region, "\\.", "\n"))
-
-# Then country
-r_country_depression <- fit_dep %>% 
-  spread_draws(
-    r_country__Depression[country, term],
-    r_country__internet[country, term]
-  ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by taking labels from original names
-  mutate(
-    country = factor(
-      country, 
-      labels = sort(unique(fit_dep$data$country))
-    )
-  ) %>% 
-  left_join(distinct(dat, region, country))
-
-# Calculate country coefficients
-country_depression <- left_join(r_country_depression, r_region_depression) %>% 
-  mutate(
-    internet = b_internet_time + r_region__internet + r_country__internet,
-    depression = b_Depression_time + r_region__Depression + r_country__Depression
-  ) %>% 
-  group_by(country, region) %>% 
-  median_qi(internet, depression)
-
-country_depression_ellipse <- spread_draws(
-  fit_dep,
-  b_Depression_time, b_internet_time,
-  cor_country__internet_time__Depression_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_country__internet_time__Depression_time, 
-        y = b_internet_time, 
-        z = b_Depression_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-region_depression_ellipse <- spread_draws(
-  fit_dep,
-  b_Depression_time, b_internet_time,
-  cor_region__internet_time__Depression_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_region__internet_time__Depression_time, 
-        y = b_internet_time, 
-        z = b_Depression_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-country_depression_cor <- fit_dep %>%
-  as_draws_df(
-    variable = c(
-      "cor_country__internet_time__Depression_time",
-      "cor_region__internet_time__Depression_time"
-    ),
-    regex = TRUE
-  ) %>% 
-  as_tibble()
-country_depression_result <- country_depression_cor %>%   
-  summarise_draws(quantile, rhat, .args = list(probs = c(.5, .05, .95))) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  mutate(result = str_glue("{`50%`} [{`5%`}, {`95%`}]"))
-
-p_cor_country_dep <- country_depression %>% 
-  ggplot(aes(internet, depression)) +
-  # geom_path(
-  #   data = region_depression_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue4"
-  # ) +
-  # geom_path(
-  #   data = country_depression_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue1"
-  # ) +
-  geom_vline(xintercept = 0, lty = 2, size = .2) +
-  geom_hline(yintercept = 0, lty = 2, size = .2) +
-  geom_point(col = "dodgerblue1", size = 1, alpha = .75) +
-  scale_x_continuous(
-    "Linear internet trend",
-    breaks = pretty_breaks()
-  ) +
-  scale_y_continuous(
-    "Linear depression trend",
-    breaks = pretty_breaks()
-  ) +
-  geom_richtext(
-    data = country_depression_result %>% 
-      filter(variable == "cor_country__internet_time__Depression_time"),
-    aes(x = -Inf, y = Inf, label = result),
-    size = 3, vjust = 1, hjust = -0.1, color = "dodgerblue4",
-    family = Font,
-    fill = NA, label.color = NA
-  ) +
-  theme(aspect.ratio = 1)
-```
-
-```{r time-correlation-selfharm}
-# Get average and region
-r_region_selfharm <- fit_sel %>% 
-  spread_draws(
-    b_Selfharm_time, 
-    b_internet_time,
-    r_region__Selfharm[region, term],
-    r_region__internet[region, term]
-  ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by replacing dot with line break
-  mutate(region = str_replace(region, "\\.", "\n"))
-
-# Then country
-r_country_selfharm <- fit_sel %>% 
-  spread_draws(
-    r_country__Selfharm[country, term],
-    r_country__internet[country, term]
-  ) %>% 
-  filter(term == "time") %>% 
-  ungroup() %>% 
-  # Fix names by taking labels from original names
-  mutate(
-    country = factor(
-      country, 
-      labels = sort(unique(fit_sel$data$country))
-    )
-  ) %>% 
-  left_join(distinct(dat, region, country))
-
-# Calculate country coefficients
-country_selfharm <- left_join(r_country_selfharm, r_region_selfharm) %>% 
-  mutate(
-    internet = b_internet_time + r_region__internet + r_country__internet,
-    selfharm = b_Selfharm_time + r_region__Selfharm + r_country__Selfharm
-  ) %>% 
-  group_by(country, region) %>% 
-  median_qi(internet, selfharm)
-
-country_selfharm_ellipse <- spread_draws(
-  fit_sel,
-  b_Selfharm_time, b_internet_time,
-  cor_country__internet_time__Selfharm_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_country__internet_time__Selfharm_time, 
-        y = b_internet_time, 
-        z = b_Selfharm_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-region_selfharm_ellipse <- spread_draws(
-  fit_sel,
-  b_Selfharm_time, b_internet_time,
-  cor_region__internet_time__Selfharm_time, 
-  ndraws = 100
-) %>% 
-  mutate(
-    e = pmap(
-      list(
-        x = cor_region__internet_time__Selfharm_time, 
-        y = b_internet_time, 
-        z = b_Selfharm_time
-      ), 
-      function(x, y, z) ellipse::ellipse(x, centre = c(y, z), level = .8) %>% 
-        as_tibble()
-    )
-  ) %>% 
-  unnest(e)
-
-country_selfharm_cor <- fit_sel %>%
-  as_draws_df(
-    variable = c(
-      "cor_country__internet_time__Selfharm_time",
-      "cor_region__internet_time__Selfharm_time"
-    ),
-    regex = TRUE
-  ) %>% 
-  as_tibble()
-country_selfharm_result <- country_selfharm_cor %>%   
-  summarise_draws(quantile, rhat, .args = list(probs = c(.5, .05, .95))) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  mutate(result = str_glue("{`50%`} [{`5%`}, {`95%`}]"))
-
-p_cor_country_sel <- country_selfharm %>% 
-  ggplot(aes(internet, selfharm)) +
-  # geom_path(
-  #   data = region_selfharm_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue4"
-  # ) +
-  # geom_path(
-  #   data = country_selfharm_ellipse, 
-  #   aes(x=x, y=y), alpha = .2, size = .1, col = "dodgerblue1"
-  # ) +
-  geom_vline(xintercept = 0, lty = 2, size = .2) +
-  geom_hline(yintercept = 0, lty = 2, size = .2) +
-  geom_point(col = "dodgerblue1", size = 1, alpha = .75) +
-  scale_x_continuous(
-    "Linear internet trend",
-    breaks = pretty_breaks()
-  ) +
-  scale_y_continuous(
-    "Linear selfharm trend",
-    breaks = pretty_breaks()
-  ) +
-  geom_richtext(
-    data = country_selfharm_result %>% 
-      filter(variable == "cor_country__internet_time__Selfharm_time"),
-    aes(x = -Inf, y = Inf, label = result),
-    size = 3, vjust = 1, hjust = -0.1, color = "dodgerblue4",
-    family = Font,
-    fill = NA, label.color = NA
-  ) +
-  theme(aspect.ratio = 1)
-```
-
-```{r}
-p_cor_country_anx + theme(axis.title.x = element_blank()) | 
-  p_cor_country_dep | 
-  p_cor_country_sel + theme(axis.title.x = element_blank())
-```
-
-
 
 ## Model 2
 
