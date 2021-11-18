@@ -31,6 +31,9 @@ itu %>%
   group_by(country) %>% 
   summarise(x = sum(!is.na(internet))) %>% 
   arrange(x)
+itu %>% 
+  drop_na(internet) %>% 
+  distinct(country)
 ```
 
 
@@ -60,11 +63,6 @@ itu %>%
   ) +
   facet_wrap(~region, nrow = 1) +
   theme(legend.position = "none")
-ggsave(
-  "output/Fig-ITU.png", 
-  device = agg_png,
-  height = 600, width = 3200, res = 300, units = "px"
-)
 ```
 
 ```{r}
@@ -146,26 +144,17 @@ pb <- gbd %>%
 
 p_gbd <- (pa / pb) +
   plot_annotation(tag_levels = "A")
-
-p_gbd
-ggsave(
-  "output/Fig-GBD.png", 
-  device = agg_png,
-  height = 2400, width = 3600, res = 300, units = "px"
-)
 ```
 
-## Multiple lines
+## Combined figure
 
-Here we create two plots. One to show all main variables' time trends for each region, and country within region. Then, show the outcome time trends for top internet trend in each region. Maybe put first in main text and second in appendix.
-
-First, variables with one region per panel.
+A figure that shows all variables (outcome means and internet rates) over time together.
 
 ```{r}
 # Add pseudo GWP to figure plot out
 pseudo_gwp <-
   bind_rows(
-    distinct(gbd, region, year) %>% 
+    distinct(gbd, region, year, val = NA) %>% 
       crossing(
         cause = fct_inorder(
           c(
@@ -176,14 +165,21 @@ pseudo_gwp <-
         )
       )
   )
-p_vars <- bind_rows(
+
+# Stack data sets and harmonise scale values
+dat_all <- bind_rows(
   pseudo_gwp,
-  gbd %>% 
-    group_by(region, country, year, cause) %>% 
-    summarise(mean = mean(val/100))
+  gbd,
+  itu %>% mutate(cause = "Internet", val = internet)
 ) %>% 
-  ungroup() %>% 
   mutate(cause = fct_inorder(cause)) %>% 
+  group_by(region, country, year, cause) %>% 
+  summarise(mean = mean(val, na.rm = TRUE)) %>% 
+  ungroup()
+
+
+
+dat_all %>% 
   mutate(year = make_date(year)) %>% 
   ggplot(aes(year, mean)) +
   scale_color_brewer(
@@ -191,7 +187,7 @@ p_vars <- bind_rows(
     palette = "Set1", direction = -1
   ) +
   scale_y_continuous(
-    "Rate or scale score",
+    "Value",
     labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
     breaks = pretty_breaks()
   ) +
@@ -214,12 +210,6 @@ p_vars <- bind_rows(
     legend.position = "none",
     panel.spacing = unit(2, "pt")
   )
-p_vars
-ggsave(
-  "output/Fig-vars-timeseries.png", 
-  device = agg_png,
-  height = 2400, width = 3600, res = 300, units = "px"
-)
 ```
 
 ```{r}

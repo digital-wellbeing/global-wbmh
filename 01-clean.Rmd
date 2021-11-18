@@ -42,6 +42,8 @@ gbd <- list.files(
 
 We then ensure that the correct variables were downloaded, and then clean this data.
 
+Note we transform the outcome values to proportions so can harmonise easier across all variables
+
 ```{r gbd-data-clean}
 # Cleaning
 
@@ -51,11 +53,11 @@ gbd <- clean_names(gbd)
 # Confirm that correct measures were downloaded:
 # - prevalence: Total number of cases
 # - rate: Total cases per 100,000 population
-#   - We convert this to a percentage
+#   - We convert this to a proportion
 # distinct(gbd, measure, metric)
 gbd <- select(gbd, -metric, -measure)
-gbd <- gbd %>% 
-  mutate(across(c(val, upper, lower), ~.x/1000))
+gbd <- gbd %>%
+  mutate(across(c(val, upper, lower), ~.x/100000))
 
 # Clean cause names
 # distinct(gbd, cause)
@@ -285,6 +287,12 @@ itu <- itu_long %>%
 rm(itu_long)
 ```
 
+## Covariates
+
+Human Development Index
+
+
+
 ## GLOBE regions
 
 We group the countries into GLOBE regions in order to have a higher level of grouping at which the analyses can be summarised. This allows us to eg. present figures and tables per region, instead of overwhelmingly by country, and also provides an upper level for the multilevel models. We use the extended GLOBE regions following Jebb et al. (2020), and had to manually add labels to some countries that were not grouped in those studies.
@@ -315,7 +323,7 @@ filter(
 
 # Load our manually filled region data
 regions_filled <- read_csv(
-  "data-raw/Regions/ITU-countries-without-region-filled.csv"
+  "data-raw/Regions/GBD-countries-without-region-filled.csv"
 ) 
 ```
 

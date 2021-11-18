@@ -6,6 +6,9 @@
 
 ```
 
+
+## OLD
+
 ```{r}
 gbd <- read_rds("data/gbd.rds")
 ```
@@ -41,7 +44,6 @@ fit_anx <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fit_dep <- brm(
@@ -51,7 +53,6 @@ fit_dep <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fit_sel <- brm(
@@ -61,7 +62,6 @@ fit_sel <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fits_brm_internet_main <- tibble(
@@ -320,7 +320,6 @@ fit_anx <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fit_dep <- brm(
@@ -330,7 +329,6 @@ fit_dep <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fit_sel <- brm(
@@ -340,7 +338,6 @@ fit_sel <- brm(
   chains = 4,
   cores = 4,
   iter = hmc$iter, warmup = hmc$warmup, 
-  refresh = hmc$refresh,
   control = list(adapt_delta = hmc$d)
 )
 fits_brm_internet_interactions <- tibble(
