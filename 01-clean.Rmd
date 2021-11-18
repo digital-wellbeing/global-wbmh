@@ -281,7 +281,8 @@ We then replace the original values with the imputed ones
 
 ```{r}
 itu <- itu_long %>% 
-  mutate(value = value_i) %>% 
+  # Pick non-missing value, from original and imputed
+  mutate(value = coalesce(value, value_i)) %>% 
   select(-value_i) %>% 
   pivot_wider()
 rm(itu_long)
