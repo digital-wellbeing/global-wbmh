@@ -17,9 +17,72 @@ itu <- read_rds("data/itu.rds")
 gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
 ```
 
+## Combined figure
+
+A figure that shows all variables (outcome means and internet rates) over time together.
+
+```{r}
+# Add pseudo GWP to figure plot out
+pseudo_gwp <-
+  bind_rows(
+    distinct(gbd, region, year, val = NA) %>% 
+      crossing(
+        cause = fct_inorder(
+          c(
+            "Negative\nexperiences", 
+            "Positive\nexperiences", 
+            "Life\nsatisfaction"
+          )
+        )
+      )
+  )
+
+# Stack data sets
+# Assume all outcomes are proportions (0-1)
+dat_all <- bind_rows(
+  pseudo_gwp,
+  gbd,
+  itu %>% mutate(cause = "Internet", val = internet)
+) %>% 
+  mutate(cause = fct_inorder(cause)) %>% 
+  group_by(region, country, year, cause) %>% 
+  summarise(mean = mean(val, na.rm = TRUE)) %>% 
+  ungroup()
+
+# Draw small multiples figure, outcomes x regions
+dat_all %>% 
+  mutate(year = make_date(year)) %>% 
+  ggplot(aes(year, mean)) +
+  scale_y_continuous(
+    "Value",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2000, 2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country, cause)), 
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line", 
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_grid(cause~region, scales = "free_y") +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(3, "pt")
+  )
+```
+
 ## Internet use trends
 
 ```{r}
+library(gtsummary)
 itu %>% 
   filter(year %in% c(2001, 2019)) %>% 
   select(region, country, year, internet) %>% 
@@ -33,36 +96,8 @@ itu %>%
   arrange(x)
 itu %>% 
   drop_na(internet) %>% 
-  distinct(country)
-```
-
-
-```{r}
-# Plot predictors from their own table--values are repeated in data that includes outcomes due to age and sex groups for each year and country
-itu %>% 
-  mutate(year = make_date(year)) %>%
-  ggplot(aes(x = year, y = internet)) +
-  coord_cartesian(ylim = c(0, 1.00)) +
-  scale_y_continuous(
-    "Internet users",
-    breaks = c(0, .25, .5, .75, 1),
-    labels = percent,
-    expand = expansion(c(0.02, 0.1))
-  ) +
-  scale_x_date(
-    breaks = breaks_width("5 years"),
-    labels = label_date("'%y")
-  ) +
-  geom_line(
-    aes(group = country),
-    alpha = .25, size = .4, color = "dodgerblue1"
-  ) +
-  stat_summary(
-    fun = mean, geom = "line", 
-    size = .6, color = "dodgerblue4"
-  ) +
-  facet_wrap(~region, nrow = 1) +
-  theme(legend.position = "none")
+  distinct(country) %>% 
+  nrow
 ```
 
 ```{r}
@@ -142,116 +177,6 @@ pb <- gbd %>%
   stat_summary(fun = mean, geom = "line", size = .6) +
   facet_grid(cause~region, scales = "free_y")
 
-p_gbd <- (pa / pb) +
+(pa / pb) +
   plot_annotation(tag_levels = "A")
 ```
-
-## Combined figure
-
-A figure that shows all variables (outcome means and internet rates) over time together.
-
-```{r}
-# Add pseudo GWP to figure plot out
-pseudo_gwp <-
-  bind_rows(
-    distinct(gbd, region, year, val = NA) %>% 
-      crossing(
-        cause = fct_inorder(
-          c(
-            "Negative\nexperiences", 
-            "Positive\nexperiences", 
-            "Life\nsatisfaction"
-          )
-        )
-      )
-  )
-
-# Stack data sets and harmonise scale values
-dat_all <- bind_rows(
-  pseudo_gwp,
-  gbd,
-  itu %>% mutate(cause = "Internet", val = internet)
-) %>% 
-  mutate(cause = fct_inorder(cause)) %>% 
-  group_by(region, country, year, cause) %>% 
-  summarise(mean = mean(val, na.rm = TRUE)) %>% 
-  ungroup()
-
-
-
-dat_all %>% 
-  mutate(year = make_date(year)) %>% 
-  ggplot(aes(year, mean)) +
-  scale_color_brewer(
-    "Variable",
-    palette = "Set1", direction = -1
-  ) +
-  scale_y_continuous(
-    "Value",
-    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
-    breaks = pretty_breaks()
-  ) +
-  scale_x_date(
-    "Year",
-    breaks = make_date(c(2005, 2010, 2015)), 
-    date_labels = "'%y", 
-    expand = expansion(.02)
-  ) +
-  geom_line(
-    aes(group = interaction(country, cause)), 
-    alpha = .25, size = .4, color = "dodgerblue1"
-  ) +
-  stat_summary(
-    fun = mean, geom = "line", 
-    size = .6, color = "dodgerblue4"
-  ) +
-  facet_grid(cause~region, scales = "free_y") +
-  theme(
-    legend.position = "none",
-    panel.spacing = unit(2, "pt")
-  )
-```
-
-```{r}
-# Get top 1 internet trend country in each region
-top_trends <- gbd %>% 
-  semi_join(distinct(itu, country)) %>% 
-  group_by(region, country) %>% 
-  summarise(tidy(lm(internet ~ time, data = cur_data_all()))) %>% 
-  filter(term == "time") %>% 
-  group_by(region) %>% 
-  slice_max(order_by = estimate, n = 1)
-pb <- gbd %>% 
-  filter(country %in% top_trends$country) %>%
-  mutate(country = factor(country, levels = top_trends$country)) %>% 
-  mutate(Group = str_glue("{sex} ({age})")) %>% 
-  mutate(year = make_date(year)) %>% 
-  ggplot(aes(year, val/100, col = Group)) +
-  scale_color_brewer(palette = "Paired") +
-  scale_y_continuous(
-    "Rate",
-    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
-    breaks = pretty_breaks()
-  ) +
-  scale_x_date(
-    "Year",
-    breaks = make_date(c(2005, 2010, 2015)), 
-    date_labels = "'%y", 
-    expand = expansion(.02)
-  ) +
-  stat_summary(fun = mean, geom = "line", size = .6) +
-  facet_grid(cause~country, scales = "free_y")
-
-(pa + theme(axis.title.x = element_blank())) / 
-  pb * 
-  theme(panel.spacing = unit(2, "pt")) +
-  plot_layout(heights = c(4, 3)) +
-  plot_annotation(tag_levels = "A")
-ggsave(
-  "output/Fig-all-vars-timeseries.png", 
-  device = agg_png,
-  height = 2400, width = 3600, res = 300, units = "px"
-)
-```
-
-
