@@ -964,12 +964,16 @@ fits_2c <- dat %>%
 Diagnostics: convergence and effective samples size
 
 ```{r}
+fits_2c <- tibble(
+  cause = c("Anxiety", "Depression"),
+  fit = list(read_rds("output/brm-2c-Anxiety.rds"), read_rds("output/brm-2c-Depression.rds"))
+)
 f2d <- fits_2c %>% 
   mutate(
     out = 
       map(
         fit, 
-        ~as_draws_df(., variable = "^b_|^sd_|^cor_", regex = TRUE) %>% 
+        ~as_draws_df(., variable = "^b_|^sd_", regex = TRUE) %>% 
           summarise_draws(samples = length, default_convergence_measures())
         )
     ) %>% 
@@ -999,15 +1003,7 @@ f2d %>%
 We then display the model's population-level parameters
 
 ```{r}
-fits_2 <- reduce(
-  list(
-    fits_2b %>% rename(fit_2b = fit), 
-    fits_2c %>% rename(fit_2c = fit)
-  ), 
-  left_join
-) %>% 
-  pivot_longer(fit_2b:fit_2c, names_to = "model", values_to = "fit")
-fits_2 %>% 
+fits_2c %>% 
   mutate(
     out = map(
       fit, 
@@ -1023,11 +1019,11 @@ fits_2 %>%
   mutate(across(where(is.numeric), ~round(., 2))) %>% 
   mutate(
     result = str_glue(
-      "b = {mean} ({`2.5%`}, {`97.5%`}) [rhat = {round(rhat, 2)}]"
+      "b = {mean} ({`2.5%`}, {`97.5%`})"
     )
   ) %>% 
   select(-c(mean, `2.5%`, `97.5%`, rhat)) %>% 
-  pivot_wider(names_from = model, values_from = result) %>% 
+  pivot_wider(names_from = cause, values_from = result) %>% 
   kbl() %>% 
   kable_paper(html_font = Font)
 ```
@@ -1035,17 +1031,18 @@ fits_2 %>%
 Coefficients
 
 ```{r}
-fits_brm_internet_interactions %>% 
+tmp <- fits_2c %>% 
   mutate(
     out = map(
       fit, 
-      ~as_draws(.x, variable = "b_", regex = TRUE) %>% 
-        summarise_draws(quantile, rhat, .args = list(probs = c(.5, .05, .95)))
+      ~emtrends(.x, var = "i1_cw", by = c("sex", "age"))
     )
   ) %>% 
-  select(-fit) %>% 
+  select(-fit)
+tmp %>% 
+  mutate(out = map(out, ~as.data.frame(out))) %>% 
   unnest(out) %>% 
-  # filter(str_detect(variable, "_i1_cw|b$")) %>% 
+  select(cause, sex, age, i1_cw.trend, lower.HPD, upper.HPD) %>% 
   kbl(digits = 3) %>% 
   kable_minimal(full_width = FALSE)
 ```
