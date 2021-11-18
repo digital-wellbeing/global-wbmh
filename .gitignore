@@ -9,6 +9,7 @@ data/
 data-raw/*
 !data-raw/Regions/
 !data-raw/GBD/
+!data-raw/HDI/
 output/
 docs/
 _bookdown_files/

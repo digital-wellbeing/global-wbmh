@@ -291,7 +291,27 @@ rm(itu_long)
 
 Human Development Index
 
+This data set was downloaded from <http://hdr.undp.org/en/indicators/137506#> in November 2021, and shared here under the terms of use <http://hdr.undp.org/en/content/copyright-and-terms-use>.
 
+```{r}
+hdi <- read_csv("data-raw/HDI/Human Development Index (HDI).csv", skip = 5) %>% 
+  # Get rid of weird empty columns
+  select(c(1, 2, seq(3, 61, by = 2)), country = Country) %>%
+  # Keep countries only
+  drop_na(`HDI Rank`) %>% 
+  select(-`HDI Rank`) %>% 
+  pivot_longer(-1, names_to = "year", values_to = "hdi") %>% 
+  mutate(across(year:hdi, as.numeric)) %>% 
+  filter(year >= 2000)
+
+# Replace broken string
+hdi$country[46]
+hdi$country[46] <- "Côte d’Ivoire"
+
+# Harmonise names
+hdi <- hdi %>% 
+  mutate(country = countryname(country))
+```
 
 ## GLOBE regions
 
