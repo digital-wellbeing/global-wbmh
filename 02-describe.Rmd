@@ -9,6 +9,7 @@ library(patchwork)
 library(lubridate)
 library(kableExtra)
 library(ggstance)
+library(gtsummary)
 library(tidyverse)
 ```
 
@@ -82,7 +83,6 @@ dat_all %>%
 ## Internet use trends
 
 ```{r}
-library(gtsummary)
 itu %>% 
   filter(year %in% c(2001, 2019)) %>% 
   select(region, country, year, internet) %>% 
@@ -104,20 +104,22 @@ itu %>%
 itu %>% 
   mutate(year = make_date(year)) %>%
   mutate(mobile = if_else(mobile > 1.50, NaN, mobile)) %>% 
-  pivot_longer(internet:mobile) %>% 
+  pivot_longer(fixed:mobile) %>% 
   mutate(name = str_to_title(name)) %>% 
   mutate(name = fct_inorder(name)) %>% 
   ggplot(aes(x = year, y = value)) +
   # coord_cartesian(ylim = c(0, 1.00)) +
   scale_y_continuous(
-    "Users or subscriptions",
+    "Subscriptions by population",
     # breaks = c(0, .25, .5, .75, 1),
     labels = percent,
-    expand = expansion(c(0.025, 0.05))
+    expand = expansion(c(0.025, 0.1))
   ) +
   scale_x_date(
-    breaks = breaks_width("5 years"),
-    labels = label_date("'%y")
+    "Year",
+    breaks = make_date(c(2000, 2005, 2010, 2015)), 
+    date_labels = "'%y", 
+    expand = expansion(.02)
   ) +
   # Ensure all axes go up to 100%
   geom_blank(
