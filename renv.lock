@@ -455,13 +455,6 @@
       "Repository": "CRAN",
       "Hash": "716869fffc16e282c118f8894e082a7d"
     },
-    "effectsize": {
-      "Package": "effectsize",
-      "Version": "0.5",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Hash": "d574e2bb0dbe570ccf30eafdcabdf0f2"
-    },
     "ellipse": {
       "Package": "ellipse",
       "Version": "0.4.2",
@@ -938,18 +931,6 @@
       "Repository": "CRAN",
       "Hash": "eaee7d2a6f3ed4491df868611cb064cc"
     },
-    "modelbased": {
-      "Package": "modelbased",
-      "Version": "0.7.0.1",
-      "Source": "GitHub",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "modelbased",
-      "RemoteUsername": "easystats",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "af8b851eda015c52945952a6d0f528483868e524",
-      "Hash": "a9d3e1a223be5643b2e40c62f203c7d5"
-    },
     "modelr": {
       "Package": "modelr",
       "Version": "0.1.8",
@@ -1061,13 +1042,6 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "c446b30cb33ec125ff02588b60660ccb"
-    },
-    "performance": {
-      "Package": "performance",
-      "Version": "0.8.0",
-      "Source": "Repository",
-      "Repository": "CRAN",
-      "Hash": "e83826fc69fe190eb5ef62012259541a"
     },
     "pillar": {
       "Package": "pillar",
