@@ -31,15 +31,29 @@ gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
 ## Read models from file
 
 ```{r}
-# Read models from files to data frames
+fits <- distinct(gbd, cause) %>% 
+  mutate(
+    fit1 = map(
+      cause, 
+      ~read_rds(str_glue("output/brm-1-{.x}.rds"))
+    ),
+    fit2 = map(
+      cause, 
+      ~read_rds(str_glue("output/brm-2-{.x}.rds"))
+    )
+  )
 ```
+
+## Model comparison
+
+Compare 1 and 2 to examine how much model fit / variance explained changes when the internet predictors are added.
 
 ## Time courses
 
 ### Figure: Timecourses and parameters
 
 ```{r}
-tmp_coefs <- fits_1c %>% 
+tmp_coefs <- fits_1 %>% 
   mutate(
     out = map(
       fit, 
@@ -55,7 +69,12 @@ tmp_coefs <- fits_1c %>%
   ) %>% 
   select(-fit) %>% 
   unnest(out) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
+  mutate(
+    across(
+      where(is.numeric), 
+      ~round(., 3)
+    )
+  ) %>% 
   mutate(result = str_glue('**{Estimate}**<br>[{CI.Lower}, {CI.Upper}]')) %>% 
   select(cause, region = Group, result)
 tmp_coefs
@@ -128,7 +147,9 @@ Calculate country coefficients and show scatterplots
 
 ```{r time-correlation-anxiety}
 # Function to wrangle draws at multiple levels and create scatterplots + ellipses
-draw_scatterplot <- function(fit, beta, r_region, r_country, sd_country, cor_country) {
+draw_scatterplot <- function(
+    fit, beta, r_region, r_country, sd_country, cor_country
+) {
   # Get average and region-specific slopes
   r_region_draws <- fit %>% 
     spread_draws(
@@ -639,7 +660,7 @@ pred_country %>%
   #   size = 2.4, vjust = .9, hjust = 0.05, color = "black",
   #   family = Font,
   #   fill = NA, label.color = NA
-  # ) +
-  facet_grid(cause~region, scales = "free_y") +
+# ) +
+facet_grid(cause~region, scales = "free_y") +
   theme(panel.spacing = unit(2, "pt"))
 ```
