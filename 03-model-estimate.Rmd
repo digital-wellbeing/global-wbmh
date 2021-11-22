@@ -57,38 +57,6 @@ Preparing the variables:
 - Contrast code factors
 
 ```{r data-prepare}
-# Predictors
-
-# Transform edge proportions to fit beta distribution
-itu <- itu %>% 
-  mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
-  mutate(internet = if_else(internet == 1, .9999999, internet))
-
-# Create lagged predictors
-itu <- itu %>% 
-  arrange(country, year) %>% 
-  group_by(country) %>% 
-  mutate(
-    across(
-      c(internet, fixed, mobile), 
-      list(`1` = ~lag(., 1)), 
-      .names = "{str_sub(.col, 1, 1)}{.fn}"
-    )
-  )
-
-# Centering within and between countries
-itu <- itu %>%
-  group_by(country) %>% 
-  mutate(
-    i1_cb = mean(i1, na.rm = TRUE), # Country average
-    i1_cw = i1 - i1_cb # Year-specific deviation from country average
-  ) %>% 
-  ungroup() %>% 
-  # Grand-mean center the country averages
-  mutate(i1_cb = i1_cb - mean(i1, na.rm = TRUE))
-
-# Outcomes
-
 # Merge predictors to outcomes
 dat <- left_join(gbd, itu)
 
@@ -99,31 +67,14 @@ dat$sex <- factor(dat$sex)
 contrasts(dat$sex) <- "contr.sum"
 dat$age <- factor(dat$age)
 contrasts(dat$age) <- "contr.sum"
-
-# For brms multivariate data subsetting: variable to indicate unique ITU values
-dat <- dat %>% 
-  group_by(country, year) %>% 
-  mutate(itu = 1:n() == 1) %>% 
-  ungroup()
 ```
 
-All the outcome variables are proportions (0-1) at this point. They need to be rescaled for HMC efficiency (self-harm models do not converge at this scale.) So remember to back-transform when interpreting results!
+All the outcome variables are proportions (0-1) at this point. We rescale them to percentages (0-100).
 
 ```{r}
-# Save this so its easy to use later to back-transform
-dat %>%
-  group_by(cause) %>%
-  summarise(median = median(val), min = min(val), max = max(val))
-
 # Important: do this for both val AND se
 dat <- dat %>% 
-  group_by(cause) %>% 
-  mutate(across(val:se, ~.x*100)) %>% 
-  ungroup()
-
-dat %>%
-  group_by(cause) %>%
-  summarise(median = median(val), min = min(val), max = max(val))
+  mutate(across(val:se, ~.x*100))
 ```
 
 ## Model 1
@@ -136,15 +87,30 @@ We fit three incrementally more complex versions of this model. First, without d
 
 We fit the model separately for each outcome.
 
-### Model 1a
+### Model 1
 
 Model 1a is a multivariate multilevel model of internet adoption and outcome (e.g. Anxiety) over time. The intercepts and coefficients of time are allowed to vary across regions and countries, with a shared correlation matrix of the random effects across the two outcomes.
 
-Internet adoption is treated as Beta-distributed. Outcome rates, the GBD estimates, are treated as Gaussian with a known standard error, resulting in a "meta-regression" model of the outcomes.
+Internet adoption is treated as Beta-distributed. Outcome rates are treated as gaussian.
+
+Prepare data for this model
+
+```{r}
+dat_model1 <- dat %>% 
+  # Transform edge proportions to fit beta distribution
+  mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
+  mutate(internet = if_else(internet == 1, .9999999, internet)) %>% 
+  # Indicate unique ITU values for MV model...
+  arrange(region, country, year, cause, sex, age) %>% 
+  # ...Use only the first internet value within a year-country
+  group_by(region, country, year) %>% 
+  mutate(itu = 1:n() == 1) %>% 
+  ungroup()
+```
 
 $$
 \begin{align*}
-y_{i[c][r]} &\sim \text{Normal}(\mu^y_{i[c][r]}, \sigma^{2y}v_i) \\
+y_{i[c][r]} &\sim \text{Normal}(\mu^y_{i[c][r]}, \sigma^{2y}) \\
 
 \mu^y_{i[c][r]} &= \beta^{y}_{0} + \gamma^{y}_{0[c]} + \delta^{y}_{0[r]} +
 \beta^y_{1}\text{t}_i + \gamma^{y}_{1[c]}\text{t}_i + \delta^{y}_{1[r]}\text{t}_i  \\
@@ -176,6 +142,7 @@ x_{i[c][r]} &\sim
 \Sigma^r
 )
 \end{align*}
+\mathbf{\beta}
 $$
 
 We then define the model formulas in brms' formula syntax. First, for internet adoption, we take care to indicate that each internet adoption datum should be modelled only once, because the values are repeated in the outcome data table. To do this we use `resp_subset(itu)`, which includes only unique rows of ITU data in the model. The `|c|` and `|r|` separating the random effects from their grouping factors indicate a shared correlation matrix, also indicated in the next model formula.
@@ -195,140 +162,30 @@ Here, we specify the outcome model. Note the `|c|` and `|r|` that link the count
 
 ```{r}
 # Define models of outcomes
-bf_1a <- bf(
-  val | resp_se(se, sigma = TRUE) ~ 
-    year + 
-    (year |c| country) +
-    (year |r| region),
-  family = gaussian()
-)
-```
-
-We then compile the model once, such that it can be updated with subsets of the data (the different outcomes) without having to compile again. 
-
-```{r}
-fit_1a <- brm(
-  bf_itu + bf_1a + set_rescor(FALSE),
-  data = filter(dat, cause == "Anxiety"),
-  chains = 0,
-  threads = hmc$threads,
-  file = "output/brm-1a"
-)
-```
-
-Then fit the model. Note we don't need this for now because the relevant estimates are provided by model 1c.
-
-```{r eval = FALSE}
-fits_1a <- dat %>% 
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      update(
-        fit_1a, 
-        newdata = cur_data_all(),
-        chains = hmc$chains, cores = hmc$cores, threads = hmc$threads,
-        iter = hmc$iter, warmup = hmc$warmup,
-        control = list(adapt_delta = hmc$d, max_treedepth = hmc$m),
-        file = str_glue("output/brm-1a-{cur_group()}")
-      )
-    )
-  )
-```
-
-### Model 1b
-
-Model 1b is as 1a but we include age (10 to 14, 15 to 19, 20 to 24) and sex as covariates.
-
-```{r}
-bf_1b <- bf(
-  val | resp_se(se, sigma = TRUE) ~ 
-    year + sex + age + 
-    (year + sex + age |c| country) +
-    (year + sex + age |r| region),
-  family = gaussian()
-)
-```
-
-Then fit the model as above, first compiling and then updating for each outcome. Note not fitted for now--relevant estimates are in model 1c.
-
-```{r eval = FALSE}
-fit_1b <- brm(
-  bf_itu + bf_1b + set_rescor(FALSE),
-  data = filter(dat, cause == "Anxiety"),
-  chains = 0,
-  threads = hmc$threads,
-  file = "output/brm-1b"
-)
-
-fits_1b <- dat %>% 
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      update(
-        fit_1b, 
-        newdata = cur_data_all(),
-        chains = hmc$chains, cores = hmc$cores, threads = hmc$threads,
-        iter = hmc$iter, warmup = hmc$warmup,
-        control = list(adapt_delta = hmc$d, max_treedepth = hmc$m),
-        file = str_glue("output/brm-1b-{cur_group()}")
-      )
-    )
-  )
-```
-
-### Model 1c
-
-Model 1c further expands 1b to include the two-way interactive terms between age and year, and sex and year. Thus we get age and sex-specific trajectories over time. We reuse the prior distributions from 1b.
-
-This takes about 3.5 hours per 1000 iterations (per model).
-
-```{r}
-bf_1c <- bf(
-  val | resp_se(se, sigma = TRUE) ~ 
-    year * sex + year * age + 
-    (year * sex + year * age |c| country) +
-    (year * sex + year * age |r| region),
-  family = gaussian()
-)
-
-# Compile model separately for each outcome to give independent default priors
-fits_1c <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      brm(
-        formula = bf_itu + bf_1c + set_rescor(FALSE), 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-1c-{cur_group()}")
-      )
-    )
-  )
-
-bf_1c_no_se <- bf(
+bf_1 <- bf(
   val ~ 
-    year * sex + year * age + 
-    (year * sex + year * age |c| country) +
-    (year * sex + year * age |r| region),
+    year * sex * age + 
+    (year * sex * age |c| country) +
+    (year * sex * age |r| region),
   family = gaussian()
 )
 
-# Compile model separately for each outcome to give independent default priors
-fits_1c <- dat %>%
+bf_1_se <- bf(
+  val | resp_se(se, sigma = TRUE) ~ 
+    year * sex * age + 
+    (year * sex * age |c| country) +
+    (year * sex * age |r| region),
+  family = gaussian()
+)
+```
+
+```{r}
+fits_1 <- dat %>%
   group_by(cause) %>% 
   summarise(
-    fit_no_se = list(
+    fit = list(
       brm(
-        formula = bf_itu + bf_1c_no_se + set_rescor(FALSE), 
+        formula = bf_itu + bf_1 + set_rescor(FALSE), 
         data = cur_data_all(),
         chains = hmc$chains, 
         cores = hmc$cores, 
@@ -340,7 +197,29 @@ fits_1c <- dat %>%
           adapt_delta = hmc$adapt_delta, 
           max_treedepth = hmc$max_treedepth
         ),
-        file = str_glue("output/brm-1c-no-se-{cur_group()}")
+        file = str_glue("output/brm-1-{cur_group()}")
+      )
+    )
+  )
+
+fits_1 <- dat %>%
+  group_by(cause) %>% 
+  summarise(
+    fit_se = list(
+      brm(
+        formula = bf_itu + bf_1_se + set_rescor(FALSE), 
+        data = cur_data_all(),
+        chains = hmc$chains, 
+        cores = hmc$cores, 
+        threads = hmc$threads,
+        iter = hmc$iter, 
+        warmup = hmc$warmup, 
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta, 
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-1-se-{cur_group()}")
       )
     )
   )
@@ -351,7 +230,7 @@ fits_1c <- dat %>%
 Diagnostics: convergence and effective samples size
 
 ```{r}
-f1d <- fits_1c %>% 
+f1d <- fits_1 %>% 
   mutate(
     out = 
       map(
@@ -381,7 +260,7 @@ f1d %>%
 ```
 
 ```{r}
-tmp <- fits_1c %>% 
+tmp <- fits_1 %>% 
   mutate(
     out = map(
       fit, 
@@ -435,6 +314,34 @@ fits_1 %>%
 
 ## Model 2
 
+Prepare data for this model
+
+```{r}
+# Create lagged predictors
+dat <- dat %>% 
+  arrange(region, country, cause, sex, age, year) %>% 
+  group_by(region, country, cause, sex, age) %>% 
+  mutate(
+    across(
+      c(internet, fixed, mobile), 
+      list(`1` = ~lag(., 1)), 
+      .names = "{str_sub(.col, 1, 1)}{.fn}"
+    )
+  )
+
+# Centering within and between countries
+dat <- dat %>%
+  group_by(country) %>% 
+  mutate(
+    i1_cb = mean(i1, na.rm = TRUE), # Country average
+    i1_cw = i1 - i1_cb # Year-specific deviation from country average
+  ) %>% 
+  ungroup() %>% 
+  # Grand-mean center the country averages
+  mutate(i1_cb = i1_cb - mean(i1, na.rm = TRUE))
+```
+
+
 Model 2 is a modification of Model 1. First, we now switch to looking at internet use more specifically as a predictor, and therefore implement a univariate model of each outcome. Second, we include within- and between-country centred 1-year-lagged internet adoption values as predictors in the model. 
 
 We fit this model in two increasingly complex forms, corresponding to models 1b and 1c, but with the addition of the internet adoption predictors, and one outcome model only.
@@ -442,48 +349,7 @@ We fit this model in two increasingly complex forms, corresponding to models 1b 
 2c takes about 5 hours per 1000 iterations.
 
 ```{r}
-bf_2b <- bf(
-  val | resp_se(se, sigma = TRUE) ~ 
-    year + sex + age + i1_cw + i1_cb +
-    (year + sex + age + i1_cw | country) +
-    (year + sex + age + i1_cw | region),
-  family = gaussian(), 
-  unused = ~ cause # Save this variable in the data frame
-)
-fit_2b <- brm(
-  bf_2b,
-  data = filter(dat, cause == "Anxiety"),
-  chains = 0,
-  threads = hmc$threads,
-  file = "output/brm-2b"
-)
-fits_2b <- dat %>% 
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      update(
-        fit_2b, 
-        newdata = cur_data_all(),
-        chains = hmc$chains, cores = hmc$cores, threads = hmc$threads,
-        iter = hmc$iter, warmup = hmc$warmup, refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2b-{cur_group()}")
-      )
-    )
-  )
-
-bf_2c <- bf(
-  val | se(se, sigma = TRUE) ~ 
-    year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
-  family = gaussian()
-)
-
-bf_2c_no_se <- bf(
+bf_2 <- bf(
   val ~ 
     year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
     (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
@@ -491,13 +357,22 @@ bf_2c_no_se <- bf(
   family = gaussian()
 )
 
+bf_2_se <- bf(
+  val | se(se, sigma = TRUE) ~ 
+    year * sex * age + i1_cw * sex * age + i1_cb + 
+    (year * sex * age + i1_cw * sex * age | country) +
+    (year * sex * age + i1_cw * sex * age | region),
+  family = gaussian()
+)
+
+
 # Compile model separately for each outcome to give independent default priors
-fits_2c <- dat %>%
+fits_2 <- dat %>%
   group_by(cause) %>% 
   summarise(
     fit = list(
       brm(
-        formula = bf_2c, 
+        formula = bf_2, 
         data = cur_data_all(),
         chains = hmc$chains, 
         cores = hmc$cores, 
@@ -509,17 +384,17 @@ fits_2c <- dat %>%
           adapt_delta = hmc$adapt_delta, 
           max_treedepth = hmc$max_treedepth
         ),
-        file = str_glue("output/brm-2c-{cur_group()}")
+        file = str_glue("output/brm-2-{cur_group()}")
       )
     )
   )
 
-fits_2c <- dat %>%
+fits_2 <- dat %>%
   group_by(cause) %>% 
   summarise(
-    fit_no_se = list(
+    fit_se = list(
       brm(
-        formula = bf_2c_no_se, 
+        formula = bf_2_se, 
         data = cur_data_all(),
         chains = hmc$chains, 
         cores = hmc$cores, 
@@ -531,7 +406,7 @@ fits_2c <- dat %>%
           adapt_delta = hmc$adapt_delta, 
           max_treedepth = hmc$max_treedepth
         ),
-        file = str_glue("output/brm-2c-no-se-{cur_group()}")
+        file = str_glue("output/brm-2-se-{cur_group()}")
       )
     )
   )
@@ -542,7 +417,7 @@ fits_2c <- dat %>%
 Diagnostics: convergence and effective samples size
 
 ```{r}
-f2d <- fits_2c %>% 
+f2d <- fits_2 %>% 
   mutate(
     out = 
       map(
@@ -573,7 +448,7 @@ f2d %>%
 ```
 
 ```{r}
-tmp <- fits_2c %>% 
+tmp <- fits_2 %>% 
   mutate(
     out = map(
       fit, 
@@ -600,7 +475,7 @@ wrap_plots(tmp$out, nrow = 3) &
 We then display the model's population-level parameters
 
 ```{r}
-tmp <- fits_2c %>% 
+tmp <- fits_2 %>% 
   mutate(
     out = map(
       fit, 
@@ -630,7 +505,7 @@ tmp %>%
 Coefficients
 
 ```{r}
-tmp <- fits_2c %>% 
+tmp <- fits_2 %>% 
   mutate(
     out = map(
       fit, 
