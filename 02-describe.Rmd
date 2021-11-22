@@ -182,3 +182,117 @@ pb <- gbd %>%
 (pa / pb) +
   plot_annotation(tag_levels = "A")
 ```
+
+## Countries
+
+### Internet
+
+```{r}
+small_multiples_internet <- function(data, region) {
+  data %>% 
+    filter(region == {{region}}) %>% 
+    mutate(year = make_date(year)) %>% 
+    ggplot(
+      aes(
+        year, internet
+      )
+    ) +
+    scale_x_date(
+      "Year",
+      breaks = make_date(c(2005, 2010, 2015, 2020)), 
+      date_labels = "'%y", 
+      expand = expansion(.02)
+    ) +
+    scale_y_continuous(
+      "Internet users",
+      limits = c(0, 1),
+      labels = percent
+    ) +
+    labs(caption = str_replace({{region}}, "\n", " ")) +
+    geom_line() +
+    facet_wrap(~country) +
+    theme(
+      legend.position = "none",
+      panel.grid.major = element_line(
+        size = .1, linetype = 2, color = "gray30"
+      )
+    )
+}
+regions <- sort(unique(itu$region))
+map(regions, ~small_multiples_internet(itu, .x))
+```
+
+### Mental health
+
+```{r}
+small_multiples_outcome <- function(data, cause, region) {
+  data %>% 
+    filter(cause == {{cause}}) %>% 
+    filter(region == {{region}}) %>% 
+    mutate(year = make_date(year)) %>% 
+    ggplot(
+      aes(
+        year, val, 
+        col = age, 
+        fill = age,
+        lty = sex,
+        group = interaction(sex, age)
+      )
+    ) +
+    scale_x_date(
+      "Year",
+      breaks = make_date(c(2000, 2005, 2010, 2015)), 
+      date_labels = "'%y", 
+      expand = expansion(.02)
+    ) +
+    scale_y_continuous(
+      {{cause}},
+      labels = percent
+    ) +
+    geom_ribbon(
+      aes(ymin = val-se*1.96, ymax = val+se*1.96),
+      alpha = .125, col = NA
+    ) +
+    labs(caption = str_replace({{region}}, "\n", " ")) +
+    geom_line() +
+    facet_wrap(~country) +
+    theme(
+      legend.position = "none",
+      panel.grid.major = element_line(
+        size = .1, linetype = 2, color = "gray30"
+      )
+    )
+}
+```
+
+#### Anxiety
+
+```{r}
+small_multiples_outcome(gbd, "Anxiety", "Anglo") +
+  theme(legend.position = "bottom") +
+  scale_color_brewer(palette = "Dark2", aesthetics = c("fill", "color"))
+
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gbd, "Anxiety", .x)
+)
+```
+
+#### Depression
+
+```{r}
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gbd, "Depression", .x)
+)
+```
+
+#### Self harm
+
+```{r}
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gbd, "Selfharm", .x)
+)
+```
+
