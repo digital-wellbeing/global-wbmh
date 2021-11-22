@@ -27,14 +27,14 @@ library(tidyverse)
 # MCMC settings
 options(brms.backend = "cmdstanr")
 hmc <- list(
-  chains = 6,
-  cores = 6,
-  threads = 2,
+  chains = 4,
+  cores = 4,
+  threads = 3,
   iter = 1500, 
-  warmup = 1000,
+  warmup = 750,
   refresh = 10,
-  adapt_delta = .95, 
-  max_treedepth = 11
+  adapt_delta = .90, 
+  max_treedepth = 10
 )
 
 # Parallelisation options: I have hard coded 12 cores here
@@ -300,30 +300,6 @@ bf_1c <- bf(
   family = gaussian()
 )
 
-# Regression coefficients
-p <- prior(normal(0, .5), class = b, resp = val) +
-  prior(normal(0, 1), class = b, coef = sex1, resp = val) +
-  # Standard deviations
-  prior(
-    student_t(7, 0, .5), 
-    class = sd, resp = val, group = region
-  ) +
-  prior(
-    student_t(7, 0, 1.5), 
-    class = sd, resp = val, group = region, coef = Intercept
-  ) +
-  prior(
-    student_t(7, 0, .5), 
-    class = sd, resp = val, group = country
-  ) +
-  prior(
-    student_t(7, 0, 1.5), 
-    class = sd, resp = val, group = country, coef = Intercept
-  ) +
-  # Correlations
-  prior(lkj(2), class = cor, group = country) +
-  prior(lkj(2), class = cor, group = region)
-
 # Compile model separately for each outcome to give independent default priors
 fits_1c <- dat %>%
   group_by(cause) %>% 
@@ -332,8 +308,6 @@ fits_1c <- dat %>%
       brm(
         formula = bf_itu + bf_1c + set_rescor(FALSE), 
         data = cur_data_all(),
-        prior = p,
-        sample_prior = "yes",
         chains = hmc$chains, 
         cores = hmc$cores, 
         threads = hmc$threads,
@@ -349,6 +323,36 @@ fits_1c <- dat %>%
     )
   )
 
+bf_1c_no_se <- bf(
+  val ~ 
+    year * sex + year * age + 
+    (year * sex + year * age |c| country) +
+    (year * sex + year * age |r| region),
+  family = gaussian()
+)
+
+# Compile model separately for each outcome to give independent default priors
+fits_1c <- dat %>%
+  group_by(cause) %>% 
+  summarise(
+    fit_no_se = list(
+      brm(
+        formula = bf_itu + bf_1c_no_se + set_rescor(FALSE), 
+        data = cur_data_all(),
+        chains = hmc$chains, 
+        cores = hmc$cores, 
+        threads = hmc$threads,
+        iter = hmc$iter, 
+        warmup = hmc$warmup, 
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta, 
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-1c-no-se-{cur_group()}")
+      )
+    )
+  )
 ```
 
 ### Checking
@@ -698,27 +702,13 @@ bf_2c <- bf(
   family = gaussian()
 )
 
-# Regression coefficients
-p <- prior(normal(0, .5), class = b) +
-  prior(normal(0, 1), class = b, coef = sex1) +
-  # Standard deviations
-  prior(
-    student_t(7, 0, .5), class = sd, group = region
-  ) +
-  prior(
-    student_t(7, 0, 1.5), 
-    class = sd, group = country, coef = Intercept
-  ) +
-  prior(
-    student_t(7, 0, .5), class = sd, group = region
-  ) +
-  prior(
-    student_t(7, 0, 1.5), 
-    class = sd, resp = val, group = country, coef = Intercept
-  ) +
-  # Correlations
-  prior(lkj(2), class = cor, group = country) +
-  prior(lkj(2), class = cor, group = region)
+bf_2c_no_se <- bf(
+  val ~ 
+    year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
+    (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
+    (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
+  family = gaussian()
+)
 
 # Compile model separately for each outcome to give independent default priors
 fits_2c <- dat %>%
@@ -728,8 +718,6 @@ fits_2c <- dat %>%
       brm(
         formula = bf_2c, 
         data = cur_data_all(),
-        prior = p,
-        sample_prior = "yes",
         chains = hmc$chains, 
         cores = hmc$cores, 
         threads = hmc$threads,
@@ -741,6 +729,28 @@ fits_2c <- dat %>%
           max_treedepth = hmc$max_treedepth
         ),
         file = str_glue("output/brm-2c-{cur_group()}")
+      )
+    )
+  )
+
+fits_2c <- dat %>%
+  group_by(cause) %>% 
+  summarise(
+    fit_no_se = list(
+      brm(
+        formula = bf_2c_no_se, 
+        data = cur_data_all(),
+        chains = hmc$chains, 
+        cores = hmc$cores, 
+        threads = hmc$threads,
+        iter = hmc$iter, 
+        warmup = hmc$warmup, 
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta, 
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-2c-no-se-{cur_group()}")
       )
     )
   )
