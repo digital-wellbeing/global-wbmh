@@ -74,7 +74,7 @@ gbd <- gbd %>%
 gbd <- gbd %>% 
   rename(country = location)
 
-# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions).We convert those to normal approximate standard errors.
+# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions). We convert those to normal approximate standard errors.
 gbd <- gbd %>% 
   mutate(se = (upper-lower) / (1.96*2)) %>%
   select(-c(upper, lower))
