@@ -30,9 +30,9 @@ hmc <- list(
   chains = 4,
   cores = 4,
   threads = 3,
-  iter = 1500, 
-  warmup = 750,
-  refresh = 10,
+  iter = 2000, 
+  warmup = 1000,
+  refresh = 50,
   adapt_delta = .90, 
   max_treedepth = 10
 )
@@ -164,23 +164,25 @@ Here, we specify the outcome model. Note the `|c|` and `|r|` that link the count
 # Define models of outcomes
 bf_1 <- bf(
   val ~ 
-    year * sex * age + 
-    (year * sex * age |c| country) +
-    (year * sex * age |r| region),
+    year * sex + year * age + 
+    (year * sex + year * age |c| country) +
+    (year * sex + year * age |r| region),
   family = gaussian()
 )
 
 bf_1_se <- bf(
-  val | resp_se(se, sigma = TRUE) ~ 
-    year * sex * age + 
-    (year * sex * age |c| country) +
-    (year * sex * age |r| region),
-  family = gaussian()
+  bf(val | resp_se(se, sigma = TRUE) ~ 
+       year * sex + year * age +
+       (year * sex + year * age |c| country) +
+       (year * sex + year * age |r| region),
+     sigma ~ 1
+  ),
+  family = brmsfamily("gaussian", link = "log", link_sigma = "log")
 )
 ```
 
 ```{r}
-fits_1 <- dat %>%
+fits_1 <- dat_model1 %>%
   group_by(cause) %>% 
   summarise(
     fit = list(
@@ -202,27 +204,27 @@ fits_1 <- dat %>%
     )
   )
 
-fits_1 <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit_se = list(
-      brm(
-        formula = bf_itu + bf_1_se + set_rescor(FALSE), 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-1-se-{cur_group()}")
-      )
-    )
-  )
+# fits_1 <- dat_model1 %>%
+#   group_by(cause) %>% 
+#   summarise(
+#     fit_se = list(
+#       brm(
+#         formula = bf_itu + bf_1_se + set_rescor(FALSE), 
+#         data = cur_data_all(),
+#         chains = hmc$chains, 
+#         cores = hmc$cores, 
+#         threads = hmc$threads,
+#         iter = hmc$iter, 
+#         warmup = hmc$warmup, 
+#         refresh = hmc$refresh,
+#         control = list(
+#           adapt_delta = hmc$adapt_delta, 
+#           max_treedepth = hmc$max_treedepth
+#         ),
+#         file = str_glue("output/brm-1-se-{cur_group()}")
+#       )
+#     )
+#   )
 ```
 
 ### Checking
@@ -307,7 +309,7 @@ fits_1 %>%
     )
   ) %>% 
   select(-c(mean, `2.5%`, `97.5%`, rhat)) %>% 
-  pivot_wider(names_from = model, values_from = result) %>% 
+  pivot_wider(names_from = cause, values_from = result) %>% 
   kbl() %>% 
   kable_paper(html_font = Font)
 ```
@@ -352,17 +354,19 @@ We fit this model in two increasingly complex forms, corresponding to models 1b 
 bf_2 <- bf(
   val ~ 
     year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
+    (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | country) +
+    (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | region),
   family = gaussian()
 )
 
 bf_2_se <- bf(
-  val | se(se, sigma = TRUE) ~ 
-    year * sex * age + i1_cw * sex * age + i1_cb + 
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
-  family = gaussian()
+  bf(val | resp_se(se, sigma = TRUE) ~ 
+       year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
+       (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | country) +
+       (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | region),
+     sigma ~ 1
+  ),
+  family = brmsfamily("gaussian", link = "log", link_sigma = "log")
 )
 
 
@@ -389,27 +393,27 @@ fits_2 <- dat %>%
     )
   )
 
-fits_2 <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit_se = list(
-      brm(
-        formula = bf_2_se, 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2-se-{cur_group()}")
-      )
-    )
-  )
+# fits_2 <- dat %>%
+#   group_by(cause) %>% 
+#   summarise(
+#     fit_se = list(
+#       brm(
+#         formula = bf_2_se, 
+#         data = cur_data_all(),
+#         chains = hmc$chains, 
+#         cores = hmc$cores, 
+#         threads = hmc$threads,
+#         iter = hmc$iter, 
+#         warmup = hmc$warmup, 
+#         refresh = hmc$refresh,
+#         control = list(
+#           adapt_delta = hmc$adapt_delta, 
+#           max_treedepth = hmc$max_treedepth
+#         ),
+#         file = str_glue("output/brm-2-se-{cur_group()}")
+#       )
+#     )
+#   )
 ```
 
 ### Checking
