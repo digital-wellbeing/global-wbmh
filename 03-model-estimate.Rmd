@@ -87,7 +87,7 @@ We fit three incrementally more complex versions of this model. First, without d
 
 We fit the model separately for each outcome.
 
-### Model 1
+### Estimate
 
 Model 1a is a multivariate multilevel model of internet adoption and outcome (e.g. Anxiety) over time. The intercepts and coefficients of time are allowed to vary across regions and countries, with a shared correlation matrix of the random effects across the two outcomes.
 
@@ -281,37 +281,6 @@ wrap_plots(tmp$out, nrow = 3) &
     breaks = pretty_breaks(2),
     labels = function(x) percent(x/100)
   )
-```
-
-
-### Summary
-
-We then display the model's population-level parameters
-
-```{r}
-fits_1 %>% 
-  mutate(
-    out = map(
-      fit, 
-      ~as_draws_df(.x, variable = "^b_", regex = TRUE) %>% 
-        summarise_draws(
-          mean, quantile, rhat, 
-          .args = list(probs = c(.025, .975))
-        )
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  mutate(
-    result = str_glue(
-      "{mean} ({`2.5%`}, {`97.5%`}) [rh = {round(rhat, 1)}]"
-    )
-  ) %>% 
-  select(-c(mean, `2.5%`, `97.5%`, rhat)) %>% 
-  pivot_wider(names_from = cause, values_from = result) %>% 
-  kbl() %>% 
-  kable_paper(html_font = Font)
 ```
 
 ## Model 2
