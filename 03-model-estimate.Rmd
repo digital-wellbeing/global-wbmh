@@ -273,7 +273,8 @@ tmp <- fits_1 %>%
         group = "region",
         resp = "val", 
         newdata = .x$data
-      ) + facet_wrap("group", nrow = 1, scales = "free")
+      ) + 
+        facet_wrap("group", nrow = 1, scales = "free")
     )
   )
 wrap_plots(tmp$out, nrow = 3) &
@@ -305,11 +306,17 @@ dat <- dat %>%
   group_by(country) %>% 
   mutate(
     i1_cb = mean(i1, na.rm = TRUE), # Country average
-    i1_cw = i1 - i1_cb # Year-specific deviation from country average
+    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
+    f1_cb = mean(f1, na.rm = TRUE),
+    f1_cw = f1 - f1_cb,
+    m1_cb = mean(m1, na.rm = TRUE),
+    m1_cw = m1 - m1_cb,
   ) %>% 
   ungroup() %>% 
   # Grand-mean center the country averages
-  mutate(i1_cb = i1_cb - mean(i1, na.rm = TRUE))
+  mutate(
+    across(c(i1_cb, f1_cb, m1_cb), ~. - mean(., na.rm = T))
+  )
 ```
 
 
@@ -323,16 +330,16 @@ We fit this model in two increasingly complex forms, corresponding to models 1b 
 bf_2 <- bf(
   val ~ 
     year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
-    (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | country) +
-    (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | region),
+    (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
+    (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
   family = gaussian()
 )
 
 bf_2_se <- bf(
   bf(val | resp_se(se, sigma = TRUE) ~ 
        year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
-       (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | country) +
-       (year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb | region),
+       (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
+       (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
      sigma ~ 1
   ),
   family = brmsfamily("gaussian", link = "log", link_sigma = "log")
@@ -493,3 +500,68 @@ tmp %>%
   kbl(digits = 3) %>% 
   kable_minimal(full_width = FALSE)
 ```
+
+## Model 2 for fixed and mobile
+
+```{r}
+bf_2_f <- bf(
+  val ~ 
+    year * sex + year * age + f1_cw * sex + f1_cw * age + f1_cb + 
+    (year * sex + year * age + f1_cw * sex + f1_cw * age | country) +
+    (year * sex + year * age + f1_cw * sex + f1_cw * age | region),
+  family = gaussian()
+)
+
+fits_2_f <- dat %>%
+  group_by(cause) %>% 
+  summarise(
+    fit = list(
+      brm(
+        formula = bf_2_f, 
+        data = cur_data_all(),
+        chains = hmc$chains, 
+        cores = hmc$cores, 
+        threads = hmc$threads,
+        iter = hmc$iter, 
+        warmup = hmc$warmup, 
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta, 
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-2-fixed-{cur_group()}")
+      )
+    )
+  )
+
+bf_2_m <- bf(
+  val ~ 
+    year * sex + year * age + m1_cw * sex + m1_cw * age + m1_cb + 
+    (year * sex + year * age + m1_cw * sex + m1_cw * age | country) +
+    (year * sex + year * age + m1_cw * sex + m1_cw * age | region),
+  family = gaussian()
+)
+
+fits_2_m <- dat %>%
+  group_by(cause) %>% 
+  summarise(
+    fit = list(
+      brm(
+        formula = bf_2_m, 
+        data = cur_data_all(),
+        chains = hmc$chains, 
+        cores = hmc$cores, 
+        threads = hmc$threads,
+        iter = hmc$iter, 
+        warmup = hmc$warmup, 
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta, 
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-2-mobile-{cur_group()}")
+      )
+    )
+  )
+```
+
