@@ -49,7 +49,6 @@ fits <- distinct(gbd, cause) %>%
 Compare 1 and 2 to examine how much model fit / variance explained changes when the internet predictors are added.
 
 ```{r}
-bayes_R2(fits$fit1[[1]], resp = "val")
 # Save to file if not done yet
 model_criteria_file <- "output/models-bayes-r2.rds"
 if (!file.exists(model_criteria_file)) {
@@ -423,6 +422,75 @@ bind_rows(
   theme(aspect.ratio = 1)
 ```
 
+### Sex and age
+
+```{r}
+x <- fits$fit1[[1]]
+get_variables(x)
+contrasts(fits$fit1[[1]]$data$sex)
+contrasts(fits$fit1[[1]]$data$age)
+
+x <- emtrends(fits$fit1[[1]], var = "year", by = c("sex", "age"), resp = "val")
+parameters(x, centrality = "mean", ci_method = "quantile", test = "pd")
+tmp <- fits_2c %>% 
+  mutate(
+    out = map(
+      fit, 
+      ~emtrends(.x, var = "i1_cw", by = c("sex"), at = list(age1=0, age2=0))
+    )
+  )
+tmp$out[[1]] %>% summary
+
+get_draws <- function(x) {
+  draws_region <- spread_draws(
+    x, 
+    b_val_year, `b_val_year:sex1`, `b_val_year:age1`, `b_val_year:age2`,
+    r_region[region, term] | term
+  ) %>% 
+    mutate(
+      `10 to 14` = val_year + b_val_year +
+        `val_year:age1`*1 + `b_val_year:age1`*1 +
+        `val_year:age2`*0 + `b_val_year:age2`*0,
+      `15 to 19` = val_year + b_val_year +
+        `val_year:age1`*0 + `b_val_year:age1`*0 +
+        `val_year:age2`*1 + `b_val_year:age2`*1,
+      `20 to 24` = val_year + b_val_year +
+        `val_year:age1`*-1 + `b_val_year:age1`*-1 +
+        `val_year:age2`*-1 + `b_val_year:age2`*-1,
+      Female = b_val_year + val_year + 
+        `val_year:sex1`*1 + `b_sex1:val_year`*1,
+      Male = val_year + b_val_year + 
+        `val_year:sex1`*-1 + `b_val_year:sex1`*-1
+    ) %>% 
+    select(region, `10 to 14`:Male)
+  
+  draws_avg <- spread_draws(
+    x, 
+    b_i1_cw, `b_sex1:i1_cw`, `b_age1:i1_cw`, `b_age2:i1_cw`,
+  ) %>% 
+    mutate(
+      `10 to 14` = b_i1_cw + `b_age1:i1_cw`*1 + `b_age2:i1_cw`*0,
+      `15 to 19` = b_i1_cw + `b_age1:i1_cw`*0 + `b_age2:i1_cw`*1,
+      `20 to 24` = b_i1_cw + `b_age1:i1_cw`*-1 + `b_age2:i1_cw`*-1,
+      Female = b_i1_cw + `b_sex1:i1_cw`*1,
+      Male = b_i1_cw + `b_sex1:i1_cw`*-1,
+      Age = `20 to 24` - `10 to 14`,
+      Sex = Female - Male
+    ) %>% 
+    select(`10 to 14`:Male) %>% 
+    mutate(region = "Average")
+  
+  draws <- bind_rows(
+    "regions" = draws_region,
+    "average" = draws_avg, 
+    .id = "Level"
+  ) %>% 
+    mutate(region = str_replace(region, "\\.", "\n")) %>% 
+    ungroup()
+  draws
+}
+```
+
 
 ## Association with internet adoption
 
@@ -547,7 +615,12 @@ forest_text <- forest_data %>%
   pivot_wider(names_from = region, values_from = r_region) %>% 
   group_by(cause) %>% 
   summarise(
-    parameters(cur_data_all()[,-c(1:2)], test = "pd", centrality = "mean")
+    parameters(
+      cur_data_all()[,-c(1:2)], 
+      test = "pd", 
+      centrality = "mean",
+      ci_method = "quantile"
+    )
   ) %>% 
   mutate(region = fct_relevel(Parameter, "Average")) %>% 
   mutate(is_average = FALSE) %>% 
@@ -589,11 +662,11 @@ p_tmp <- drop_na(forest_data, r_region) %>%
   ) +
   stat_halfeye(
     point_interval = NULL, normalize = "panels", 
-    height = .75, adjust = 1.25,
+    height = .75, adjust = 1,
     aes(alpha = is_average)
   ) +
   stat_pointinterval(
-    alpha = 1, .width = c(.9),
+    alpha = 1, .width = c(.95),
     interval_size = 1,
     point_size = 1.75,
     fill = "white",
@@ -620,6 +693,22 @@ p_tmp <- drop_na(forest_data, r_region) %>%
     wrap_elements(grid::textGrob('Life satisfaction\nTBD'))) /
   p_tmp
 ```
+
+A table of smallest and greatest country-level estimates
+
+```{r}
+forest_data %>% 
+  drop_na(country) %>% 
+  select(-.draw, -r_region) %>% 
+  group_by(cause) %>% 
+  filter(
+    r_country %in% 
+      c(min(r_country, na.rm = T), max(r_country, na.rm = T))
+  ) %>% 
+  kbl() %>% 
+  kable_paper(html_font = Font, full_width = FALSE)
+```
+
 
 ### Figure: Between country effects
 
@@ -666,28 +755,195 @@ tmp$out[[1]] %>% summary
 Calculate coefficients from contrast coded factors
 
 ```{r}
-x <- fits_2c$fit[[1]]
-y <- emtrends(x, var = "i1_cw", by = c("age", "sex"))
-gather_emmeans_draws(y) %>% mean_qi()
+get_coefs <- function(x) {
+  h <- c(
+    `10 to 14` = 
+      "i1_cw + age1:i1_cw*1 + age2:i1_cw*0 = 0",
+    `15 to 19` = 
+      "i1_cw + age1:i1_cw*0 + age2:i1_cw*1 = 0",
+    `20 to 24` = 
+      "i1_cw + age1:i1_cw*-1 + age2:i1_cw*-1 = 0",
+    `Female` = 
+      "i1_cw + sex1:i1_cw*1 = 0",
+    `Male` = 
+      "i1_cw + sex1:i1_cw*-1 = 0"
+  )
+  
+  # Average samples
+  avg_h <- hypothesis(x, h)
+  avg_s <- avg_h$samples %>% as_tibble()
+  names(avg_s) <- avg_h$hypothesis$Hypothesis  
+  avg_s <- avg_s %>% 
+    pivot_longer(everything()) %>% 
+    mutate(name = paste("Average", name, sep = "-"))
+  
+  # Region samples
+  region_h <- hypothesis(x, h, scope = "coef", group = "region")
+  region_s <- region_h$samples %>% as_tibble()
+  names(region_s) <- paste(
+    region_h$hypothesis$Group, 
+    region_h$hypothesis$Hypothesis, 
+    sep = "-"
+  )
+  region_s <- region_s %>% 
+    pivot_longer(everything())
+  
+  # Country means
+  country_h <- hypothesis(
+    x, h, scope = "ranef", group = "country"
+  )$hypothesis %>% 
+    as_tibble()
+  country_h <- country_h %>% 
+    left_join(
+      distinct(x$data, region, country), 
+      by = c("Group" = "country")
+    ) %>% 
+    select(region, Hypothesis, Estimate, country = Group)
+  
+  # Add region coefs to country ranefs
+  country_h <- left_join(
+    country_h, 
+    region_h$hypothesis %>% 
+      rename(region = Group, coef = Estimate)
+  ) %>% 
+    mutate(Estimate = Estimate + coef)
+  
+  # Join all to one data frame
+  samples <- bind_rows(avg_s, region_s) %>% 
+    separate(name, into = c("region", "Hypothesis"), sep = "-") %>% 
+    bind_rows(country_h)
+  
+  # Verify that naming worked
+  # region_h$hypothesis %>% 
+  #   left_join(
+  #     samples %>% 
+  #       group_by(region, Hypothesis) %>% 
+  #       summarise(xxx = mean(value)),
+  #     by = c("Group" = "region", "Hypothesis")
+  #   ) %>% 
+  #   as_tibble() %>% 
+  #   filter(xxx != Estimate)
+  
+  samples
+}
+tmp <- fits %>% 
+  mutate(out = map(fit2, get_coefs)) %>% 
+  select(-fit1, -fit2)
 
-contrasts(x$data$sex)
-contrasts(x$data$age)
-h <- c(
-  `Female_10 to 14` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*1 + age2:i1_cw*0 = 0",
-  `Female_15 to 19` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*0 + age2:i1_cw*1 = 0",
-  `Female_20 to 24` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*-1 + age2:i1_cw*-1 = 0",
-  `Male_10 to 14` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*1 + age2:i1_cw*0 = 0",
-  `Male_15 to 19` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*0 + age2:i1_cw*1 = 0",
-  `Male_20 to 24` = 
-    "i1_cw + sex1:i1_cw*1 + age1:i1_cw*-1 + age2:i1_cw*-1 = 0"
-)
-tmp_avg <- hypothesis(x, h)
-tmp_region <- hypothesis(x, h, scope = "coef", group = "region")
+tmp <- tmp %>% 
+  unnest(out) %>% 
+  mutate(is_average = region=="Average") %>% 
+  mutate(region = fct_relevel(region, "Average")) %>% 
+  mutate(panel = if_else(str_detect(Hypothesis, "ale"), "Sex", "Age")) %>% 
+  mutate(
+    side = if_else(Hypothesis %in% c("10 to 14", "Female"), "top", "bottom")
+  )
+
+tmp_regions <- tmp %>% 
+  filter(is.na(country)) %>% 
+  filter(Hypothesis != "15 to 19")
+
+tmp_countries <- tmp %>% 
+  filter(!is.na(country)) %>% 
+  filter(Hypothesis != "15 to 19") %>% 
+  mutate(is_average = FALSE)
+
+tmp_text <- tmp_regions %>% 
+  select(cause, region, Hypothesis, value) %>% 
+  group_by(cause, region, Hypothesis) %>% 
+  mutate(.draw = 1:n()) %>% 
+  pivot_wider(names_from = Hypothesis, values_from = value) %>%
+  mutate(Age = `20 to 24` - `10 to 14`, Sex = Female - Male) %>% 
+  summarise(
+    parameters(
+      cur_data_all() %>% select(Age, Sex), 
+      test = "pd", 
+      centrality = "mean",
+      ci_method = "quantile"
+    )
+  ) %>% 
+  mutate(
+    across(
+      where(is.numeric), 
+      ~if_else(
+        cause=="Selfharm", 
+        format(round(., 3), nsmall = 3), 
+        format(round(., 2), nsmall = 2)
+      )
+    )
+  ) %>% 
+  mutate(is_average = region=="Average") %>% 
+  mutate(region = fct_relevel(region, "Average")) %>% 
+  mutate(panel = Parameter)
+
+tmp_regions %>%   
+  ggplot(aes(value, region, col = Hypothesis, fill = Hypothesis)) +
+  scale_alpha_manual(values = c(.3, .6)) +
+  scale_color_brewer(
+    "Group",
+    palette = "Set1",
+    aesthetics = c("color", "fill")
+  ) +
+  scale_shape_manual(
+    values = c(21, 19), guide = "none"
+  ) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_y_discrete(
+    expand = expansion(c(0.1, .1)),
+    labels = function(x) if_else(x == "Average", "**Average**", x)
+  ) +
+  scale_x_continuous(
+    "Conditional effect of 100% increase in internet adoption on outcome", 
+    breaks = pretty_breaks(), 
+    labels = function(x) percent(x/100, .01) %>% str_remove("\\.00"),
+    expand = expansion(c(.01, .1))
+  ) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels", 
+    height = .75, adjust = 1,
+    aes(side = side, group = side, alpha = is_average), 
+    show.legend = FALSE
+  ) +
+  # geom_point(
+  #   data = tmp_countries %>% 
+  #     drop_na(region),
+  #   aes(x = Estimate, shape = Star=="*"),
+  #   size = .5, alpha = .4, fill = "white",
+  #   position = position_dodge2v(.5)
+  # ) +
+  stat_pointinterval(
+    alpha = 1, .width = c(.95),
+    interval_size = .4,
+    point_size = 1.5,
+    fill = "white",
+    aes(shape = after_stat(xmin > 0 | xmax < 0), group = side),
+    position = position_dodgev(.2), key_glyph = draw_key_point
+  ) +
+  geom_richtext(
+    data = tmp_text %>% 
+      mutate(Hypothesis = NA) %>% 
+      mutate(
+        Mean = if_else(
+          as.numeric(pd) >= .95,
+          str_glue("**{Mean}**"), 
+          Mean
+        ),
+      ),
+    aes(
+      x = Inf,
+      label = str_glue("{Mean} [{CI_low}, {CI_high}]")
+    ),
+    size = 2.5, hjust = 1, col = "black", 
+    family = Font, label.color = NA, 
+    label.padding = unit(0, "pt"),
+    show.legend = FALSE
+  ) +
+  facet_grid2(panel ~ cause, scales = "free_x", axes = "x") +
+  theme(
+    legend.position = "right",
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown()
+  )
 ```
 
 
