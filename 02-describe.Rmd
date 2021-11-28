@@ -9,13 +9,13 @@ library(patchwork)
 library(lubridate)
 library(kableExtra)
 library(ggstance)
-library(gtsummary)
 library(tidyverse)
 ```
 
 ```{r}
 itu <- read_rds("data/itu.rds")
-gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
+gwp <- read_rds("data/gwp.rds")
+gbd <- read_rds("data/gbd.rds")
 ```
 
 ## Combined figure
@@ -23,29 +23,14 @@ gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
 A figure that shows all variables (outcome means and internet rates) over time together.
 
 ```{r}
-# Add pseudo GWP to figure plot out
-pseudo_gwp <-
-  bind_rows(
-    distinct(gbd, region, year, val = NA) %>% 
-      crossing(
-        cause = fct_inorder(
-          c(
-            "Negative\nexperiences", 
-            "Positive\nexperiences", 
-            "Life\nsatisfaction"
-          )
-        )
-      )
-  )
-
 # Stack data sets
 # Assume all outcomes are proportions (0-1)
 dat_all <- bind_rows(
-  pseudo_gwp,
+  gwp,
   gbd,
   itu %>% mutate(cause = "Internet", val = internet)
 ) %>% 
-  mutate(cause = fct_inorder(cause)) %>% 
+  mutate(cause = fct_inorder(str_replace(cause, " ", "\n"))) %>% 
   group_by(region, country, year, cause) %>% 
   summarise(mean = mean(val, na.rm = TRUE)) %>% 
   ungroup()
@@ -61,7 +46,7 @@ dat_all %>%
   ) +
   scale_x_date(
     "Year",
-    breaks = make_date(c(2000, 2005, 2010, 2015)), 
+    breaks = make_date(c(2000, 2005, 2010, 2015, 2020)), 
     date_labels = "'%y", 
     expand = expansion(.02)
   ) +
@@ -73,6 +58,16 @@ dat_all %>%
     fun = mean, geom = "line", 
     size = .6, color = "dodgerblue4"
   ) +
+  # Ensure 0-100 limits for gwp outcomes
+  # geom_blank(
+  #   data = crossing(
+  #     region = "Africa", 
+  #     country = NA, 
+  #     mean = c(0, 1), 
+  #     cause = unique(gwp$cause),
+  #     year = make_date(2001)
+  #     )
+  # ) +
   facet_grid(cause~region, scales = "free_y") +
   theme(
     legend.position = "none",
@@ -239,6 +234,7 @@ small_multiples_outcome <- function(data, cause, region) {
         group = interaction(sex, age)
       )
     ) +
+    scale_color_brewer(palette = "Dark2", aesthetics = c("fill", "color")) +
     scale_x_date(
       "Year",
       breaks = make_date(c(2000, 2005, 2010, 2015)), 
@@ -265,12 +261,50 @@ small_multiples_outcome <- function(data, cause, region) {
 }
 ```
 
+#### Life satisfaction
+
+```{r}
+# Do this first just to show the legend
+small_multiples_outcome(gwp, "Life\nsatisfaction", "Anglo") +
+  theme(legend.position = "bottom")
+
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gwp, "Life\nsatisfaction", .x)
+)
+```
+
+#### Negative experiences
+
+```{r}
+# Do this first just to show the legend
+small_multiples_outcome(gwp, "Negative\nexperiences", "Anglo") +
+  theme(legend.position = "bottom")
+
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gwp, "Negative\nexperiences", .x)
+)
+```
+
+#### Positive experiences
+
+```{r}
+# Do this first just to show the legend
+small_multiples_outcome(gwp, "Positive\nexperiences", "Anglo") +
+  theme(legend.position = "bottom")
+
+map(
+  regions[regions!="Anglo"], 
+  ~small_multiples_outcome(gwp, "Positive\nexperiences", .x)
+)
+```
+
 #### Anxiety
 
 ```{r}
 small_multiples_outcome(gbd, "Anxiety", "Anglo") +
-  theme(legend.position = "bottom") +
-  scale_color_brewer(palette = "Dark2", aesthetics = c("fill", "color"))
+  theme(legend.position = "bottom")
 
 map(
   regions[regions!="Anglo"], 
