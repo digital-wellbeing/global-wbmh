@@ -40,7 +40,8 @@ hmc <- list(
 
 ```{r}
 itu <- read_rds("data/itu.rds")
-gbd <- read_rds("data/gbd.rds") # 10 to 24 year olds
+gwp <- read_rds("data/gwp.rds")
+gbd <- read_rds("data/gbd.rds") 
 ```
 
 ## Prepare data for models
@@ -56,17 +57,71 @@ Preparing the variables:
 - 1 unit: 100%
 - Contrast code factors
 
-```{r data-prepare}
-# Merge predictors to outcomes
-dat <- left_join(gbd, itu)
+```{r}
+# Transform edge proportions to fit beta distribution
+# when this is used as an outcome
+itu <- itu %>% 
+  mutate(ib = if_else(internet == 0, .0000001, internet)) %>% 
+  mutate(ib = if_else(internet == 1, .9999999, internet))
 
-# Center and scale year, and contrast code factors
+# Create lagged predictors
+itu <- itu %>% 
+  arrange(region, country, year) %>% 
+  group_by(region, country) %>% 
+  mutate(
+    across(
+      c(internet, fixed, mobile), 
+      list(`1` = ~lag(., 1)), 
+      .names = "{str_sub(.col, 1, 1)}{.fn}"
+    )
+  )
+
+# Centering predictors within and between countries
+itu <- itu %>%
+  group_by(country) %>% 
+  mutate(
+    i1_cb = mean(i1, na.rm = TRUE), # Country average
+    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
+    f1_cb = mean(f1, na.rm = TRUE),
+    f1_cw = f1 - f1_cb,
+    m1_cb = mean(m1, na.rm = TRUE),
+    m1_cw = m1 - m1_cb,
+  ) %>% 
+  ungroup() %>% 
+  # Grand-mean center the country averages
+  mutate(
+    across(c(i1_cb, f1_cb, m1_cb), ~. - mean(., na.rm = T))
+  )
+```
+
+```{r data-prepare}
+# Stack outcome data
+dat <- bind_rows(gwp, gbd)
+
+# Merge predictors to outcomes
+dat <- left_join(dat, itu)
+
+# Arrange data
+dat <- arrange(dat, region, country, year)
+
+# Center and scale year, and contrast code sex
 dat <- dat %>% 
   mutate(year = (year - 2010) / 10)
-dat$sex <- factor(dat$sex)
-contrasts(dat$sex) <- "contr.sum"
-dat$age <- factor(dat$age)
-contrasts(dat$age) <- "contr.sum"
+```
+
+Identify values to use in mv models
+
+```{r}
+# Give each outcome value a tag to ensure it is used in MV model
+dat <- dat %>% 
+  mutate(y = !is.na(val))
+
+# Indicate unique ITU values for MV model
+dat <- dat %>% 
+  # Unique values exist for each country-year
+  group_by(region, country, year) %>% 
+  mutate(itu = 1:n() == 1) %>% 
+  ungroup()
 ```
 
 All the outcome variables are proportions (0-1) at this point. We rescale them to percentages (0-100).
@@ -76,6 +131,16 @@ All the outcome variables are proportions (0-1) at this point. We rescale them t
 dat <- dat %>% 
   mutate(across(val:se, ~.x*100))
 ```
+
+Ensure that factors are contrast coded
+
+```{r}
+dat <- dat %>% 
+  mutate(across(c(sex, age), factor))
+options(contrasts = c(unordered = "contr.sum", ordered = "contr.poly"))
+options()$contrasts
+```
+
 
 ## Model 1
 
@@ -94,19 +159,6 @@ Model 1a is a multivariate multilevel model of internet adoption and outcome (e.
 Internet adoption is treated as Beta-distributed. Outcome rates are treated as gaussian.
 
 Prepare data for this model
-
-```{r}
-dat_model1 <- dat %>% 
-  # Transform edge proportions to fit beta distribution
-  mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
-  mutate(internet = if_else(internet == 1, .9999999, internet)) %>% 
-  # Indicate unique ITU values for MV model...
-  arrange(region, country, year, cause, sex, age) %>% 
-  # ...Use only the first internet value within a year-country
-  group_by(region, country, year) %>% 
-  mutate(itu = 1:n() == 1) %>% 
-  ungroup()
-```
 
 $$
 \begin{align*}
@@ -167,7 +219,8 @@ bf_1 <- bf(
     year * sex + year * age + 
     (year * sex + year * age |c| country) +
     (year * sex + year * age |r| region),
-  family = gaussian()
+  family = gaussian(),
+  unused = ~ cause
 )
 
 bf_1_se <- bf(
@@ -177,12 +230,13 @@ bf_1_se <- bf(
        (year * sex + year * age |r| region),
      sigma ~ 1
   ),
-  family = brmsfamily("gaussian", link = "log", link_sigma = "log")
+  family = gaussian(),
+  unused = ~ cause
 )
 ```
 
 ```{r}
-fits_1 <- dat_model1 %>%
+fits_1 <- dat %>%
   group_by(cause) %>% 
   summarise(
     fit = list(
@@ -204,21 +258,22 @@ fits_1 <- dat_model1 %>%
     )
   )
 
-# fits_1 <- dat_model1 %>%
-#   group_by(cause) %>% 
+# fits_1_se <- dat %>%
+#   filter(!(cause %in% c("Anxiety", "Depression", "Selfharm")))
+#   group_by(cause) %>%
 #   summarise(
 #     fit_se = list(
 #       brm(
-#         formula = bf_itu + bf_1_se + set_rescor(FALSE), 
+#         formula = bf_itu + bf_1_se + set_rescor(FALSE),
 #         data = cur_data_all(),
-#         chains = hmc$chains, 
-#         cores = hmc$cores, 
+#         chains = hmc$chains,
+#         cores = hmc$cores,
 #         threads = hmc$threads,
-#         iter = hmc$iter, 
-#         warmup = hmc$warmup, 
+#         iter = hmc$iter,
+#         warmup = hmc$warmup,
 #         refresh = hmc$refresh,
 #         control = list(
-#           adapt_delta = hmc$adapt_delta, 
+#           adapt_delta = hmc$adapt_delta,
 #           max_treedepth = hmc$max_treedepth
 #         ),
 #         file = str_glue("output/brm-1-se-{cur_group()}")
@@ -288,37 +343,6 @@ wrap_plots(tmp$out, nrow = 3) &
 
 Prepare data for this model
 
-```{r}
-# Create lagged predictors
-dat <- dat %>% 
-  arrange(region, country, cause, sex, age, year) %>% 
-  group_by(region, country, cause, sex, age) %>% 
-  mutate(
-    across(
-      c(internet, fixed, mobile), 
-      list(`1` = ~lag(., 1)), 
-      .names = "{str_sub(.col, 1, 1)}{.fn}"
-    )
-  )
-
-# Centering within and between countries
-dat <- dat %>%
-  group_by(country) %>% 
-  mutate(
-    i1_cb = mean(i1, na.rm = TRUE), # Country average
-    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
-    f1_cb = mean(f1, na.rm = TRUE),
-    f1_cw = f1 - f1_cb,
-    m1_cb = mean(m1, na.rm = TRUE),
-    m1_cw = m1 - m1_cb,
-  ) %>% 
-  ungroup() %>% 
-  # Grand-mean center the country averages
-  mutate(
-    across(c(i1_cb, f1_cb, m1_cb), ~. - mean(., na.rm = T))
-  )
-```
-
 
 Model 2 is a modification of Model 1. First, we now switch to looking at internet use more specifically as a predictor, and therefore implement a univariate model of each outcome. Second, we include within- and between-country centred 1-year-lagged internet adoption values as predictors in the model. 
 
@@ -332,7 +356,8 @@ bf_2 <- bf(
     year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
     (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
     (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
-  family = gaussian()
+  family = gaussian(),
+  unused = ~ cause
 )
 
 bf_2_se <- bf(
@@ -342,7 +367,8 @@ bf_2_se <- bf(
        (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
      sigma ~ 1
   ),
-  family = brmsfamily("gaussian", link = "log", link_sigma = "log")
+  family = gaussian(),
+  unused = ~ cause
 )
 
 
