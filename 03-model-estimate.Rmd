@@ -25,11 +25,13 @@ library(ggstance)
 library(tidyverse)
 
 # MCMC settings
+ncores <- min(parallel::detectCores(), 12)
+nchains <- 4
 options(brms.backend = "cmdstanr")
 hmc <- list(
-  chains = 4,
-  cores = 4,
-  threads = 3,
+  chains = nchains,
+  cores = nchains,
+  threads = ncores %/% nchains,
   iter = 2000, 
   warmup = 1000,
   refresh = 50,
@@ -112,8 +114,9 @@ dat <- dat %>%
 
 # Indicate unique ITU values for MV model
 dat <- dat %>% 
-  # Unique values exist for each country-year
-  group_by(region, country, year) %>% 
+  # Unique values exist for each country-year, but must be given for each
+  # outcome
+  group_by(region, country, year, cause) %>% 
   mutate(itu = 1:n() == 1) %>% 
   ungroup()
 ```
