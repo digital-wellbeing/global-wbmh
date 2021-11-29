@@ -58,12 +58,6 @@ Preparing the variables:
 - Contrast code factors
 
 ```{r}
-# Transform edge proportions to fit beta distribution
-# when this is used as an outcome
-itu <- itu %>% 
-  mutate(ib = if_else(internet == 0, .0000001, internet)) %>% 
-  mutate(ib = if_else(internet == 1, .9999999, internet))
-
 # Create lagged predictors
 itu <- itu %>% 
   arrange(region, country, year) %>% 
@@ -242,7 +236,10 @@ fits_1 <- dat %>%
     fit = list(
       brm(
         formula = bf_itu + bf_1 + set_rescor(FALSE), 
-        data = cur_data_all(),
+        # Transform intrnet edge values
+        data = cur_data_all() %>% 
+          mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
+          mutate(internet = if_else(internet == 1, .9999999, internet)),
         chains = hmc$chains, 
         cores = hmc$cores, 
         threads = hmc$threads,
@@ -258,28 +255,29 @@ fits_1 <- dat %>%
     )
   )
 
-# fits_1_se <- dat %>%
-#   filter(!(cause %in% c("Anxiety", "Depression", "Selfharm")))
-#   group_by(cause) %>%
-#   summarise(
-#     fit_se = list(
-#       brm(
-#         formula = bf_itu + bf_1_se + set_rescor(FALSE),
-#         data = cur_data_all(),
-#         chains = hmc$chains,
-#         cores = hmc$cores,
-#         threads = hmc$threads,
-#         iter = hmc$iter,
-#         warmup = hmc$warmup,
-#         refresh = hmc$refresh,
-#         control = list(
-#           adapt_delta = hmc$adapt_delta,
-#           max_treedepth = hmc$max_treedepth
-#         ),
-#         file = str_glue("output/brm-1-se-{cur_group()}")
-#       )
-#     )
-#   )
+# This does not converge with selfharm
+fits_1_se <- dat %>%
+  filter(!(cause %in% c("Selfharm"))) %>% 
+  group_by(cause) %>%
+  summarise(
+    fit_se = list(
+      brm(
+        formula = bf_itu + bf_1_se + set_rescor(FALSE),
+        data = cur_data_all(),
+        chains = hmc$chains,
+        cores = hmc$cores,
+        threads = hmc$threads,
+        iter = hmc$iter,
+        warmup = hmc$warmup,
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta,
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-1-se-{cur_group()}")
+      )
+    )
+  )
 ```
 
 ### Checking
@@ -395,27 +393,28 @@ fits_2 <- dat %>%
     )
   )
 
-# fits_2 <- dat %>%
-#   group_by(cause) %>% 
-#   summarise(
-#     fit_se = list(
-#       brm(
-#         formula = bf_2_se, 
-#         data = cur_data_all(),
-#         chains = hmc$chains, 
-#         cores = hmc$cores, 
-#         threads = hmc$threads,
-#         iter = hmc$iter, 
-#         warmup = hmc$warmup, 
-#         refresh = hmc$refresh,
-#         control = list(
-#           adapt_delta = hmc$adapt_delta, 
-#           max_treedepth = hmc$max_treedepth
-#         ),
-#         file = str_glue("output/brm-2-se-{cur_group()}")
-#       )
-#     )
-#   )
+fits_2 <- dat %>%
+  filter(!(cause %in% c("Selfharm"))) %>% 
+  group_by(cause) %>%
+  summarise(
+    fit_se = list(
+      brm(
+        formula = bf_2_se,
+        data = cur_data_all(),
+        chains = hmc$chains,
+        cores = hmc$cores,
+        threads = hmc$threads,
+        iter = hmc$iter,
+        warmup = hmc$warmup,
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta,
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("output/brm-2-se-{cur_group()}")
+      )
+    )
+  )
 ```
 
 ### Checking
@@ -535,7 +534,8 @@ bf_2_f <- bf(
     year * sex + year * age + f1_cw * sex + f1_cw * age + f1_cb + 
     (year * sex + year * age + f1_cw * sex + f1_cw * age | country) +
     (year * sex + year * age + f1_cw * sex + f1_cw * age | region),
-  family = gaussian()
+  family = gaussian(), 
+  unused = ~ cause
 )
 
 fits_2_f <- dat %>%
@@ -565,7 +565,8 @@ bf_2_m <- bf(
     year * sex + year * age + m1_cw * sex + m1_cw * age + m1_cb + 
     (year * sex + year * age + m1_cw * sex + m1_cw * age | country) +
     (year * sex + year * age + m1_cw * sex + m1_cw * age | region),
-  family = gaussian()
+  family = gaussian(),
+  unused = ~ cause
 )
 
 fits_2_m <- dat %>%
