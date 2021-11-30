@@ -32,8 +32,8 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = ncores %/% nchains,
-  iter = 2000, 
-  warmup = 1000,
+  iter = 1000, 
+  warmup = 500,
   refresh = 50,
   adapt_delta = .90, 
   max_treedepth = 10
@@ -50,6 +50,7 @@ gbd <- read_rds("data/gbd.rds")
 
 Preparing the variables:
 
+- Drop countries with no values
 - Transform edge values of internet variable to fit beta
 - center year on 2010 (roughly in the middle)
 - Intercept and simple effects at 2010
@@ -60,6 +61,20 @@ Preparing the variables:
 - Contrast code factors
 
 ```{r}
+countries_no_internet <- itu %>% 
+  group_by(country) %>% 
+  summarise(s = sum(internet, na.rm = TRUE)) %>% 
+  filter(s == 0)
+
+itu <- itu %>% 
+  filter(!(country %in% countries_no_internet$country))
+
+filter(itu, internet %in% c(0, 1))
+
+itu <- itu %>% 
+  mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
+  mutate(internet = if_else(internet == 1, .9999999, internet))
+
 # Create lagged predictors
 itu <- itu %>% 
   arrange(region, country, year) %>% 
@@ -108,10 +123,6 @@ dat <- dat %>%
 Identify values to use in mv models
 
 ```{r}
-# Give each outcome value a tag to ensure it is used in MV model
-dat <- dat %>% 
-  mutate(y = !is.na(val))
-
 # Indicate unique ITU values for MV model
 dat <- dat %>% 
   # Unique values exist for each country-year, but must be given for each
@@ -139,7 +150,7 @@ options()$contrasts
 ```
 
 
-## Model 1
+## Model equations
 
 The first model addresses our first research question: To what extent did the outcomes change over time. It will also answer whether changes were different across the demographic groups.
 
@@ -148,8 +159,6 @@ It will also begin to address the issue of associations between internet adoptio
 We fit three incrementally more complex versions of this model. First, without demographic covariates, second with, and third with the two-way interactions with time.
 
 We fit the model separately for each outcome.
-
-### Estimate
 
 Model 1a is a multivariate multilevel model of internet adoption and outcome (e.g. Anxiety) over time. The intercepts and coefficients of time are allowed to vary across regions and countries, with a shared correlation matrix of the random effects across the two outcomes.
 
@@ -230,128 +239,7 @@ bf_1_se <- bf(
   family = gaussian(),
   unused = ~ cause
 )
-```
 
-```{r}
-fits_1 <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      brm(
-        formula = bf_itu + bf_1 + set_rescor(FALSE), 
-        # Transform intrnet edge values
-        data = cur_data_all() %>% 
-          mutate(internet = if_else(internet == 0, .0000001, internet)) %>% 
-          mutate(internet = if_else(internet == 1, .9999999, internet)),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-1-{cur_group()}")
-      )
-    )
-  )
-
-# This does not converge with selfharm
-fits_1_se <- dat %>%
-  filter(!(cause %in% c("Selfharm"))) %>% 
-  group_by(cause) %>%
-  summarise(
-    fit_se = list(
-      brm(
-        formula = bf_itu + bf_1_se + set_rescor(FALSE),
-        data = cur_data_all(),
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-1-se-{cur_group()}")
-      )
-    )
-  )
-```
-
-### Checking
-
-Diagnostics: convergence and effective samples size
-
-```{r}
-f1d <- fits_1 %>% 
-  mutate(
-    out = 
-      map(
-        fit, 
-        ~as_draws_df(., variable = "^b_|^sd_|^cor_", regex = TRUE) %>% 
-          summarise_draws(samples = length, default_convergence_measures())
-      )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out)
-f1d %>%  
-  kbl(
-    caption = "HMC Diagnostics, Model 1c",
-    digits = c(0,0,0,2,0,0)
-  ) %>% 
-  kable_paper(html_font = Font) %>% 
-  column_spec(
-    4, 
-    color = "white",
-    background = spec_color(
-      f1d$rhat, 
-      direction = 1, 
-      option = "C", 
-      end = .7
-    )
-  )
-```
-
-```{r}
-tmp <- fits_1 %>% 
-  mutate(
-    out = map(
-      fit, 
-      ~pp_check(
-        .x, 
-        ndraws = 10, 
-        type = "dens_overlay_grouped",
-        group = "region",
-        resp = "val", 
-        newdata = .x$data
-      ) + 
-        facet_wrap("group", nrow = 1, scales = "free")
-    )
-  )
-wrap_plots(tmp$out, nrow = 3) &
-  scale_x_continuous(
-    breaks = pretty_breaks(2),
-    labels = function(x) percent(x/100)
-  )
-```
-
-## Model 2
-
-Prepare data for this model
-
-
-Model 2 is a modification of Model 1. First, we now switch to looking at internet use more specifically as a predictor, and therefore implement a univariate model of each outcome. Second, we include within- and between-country centred 1-year-lagged internet adoption values as predictors in the model. 
-
-We fit this model in two increasingly complex forms, corresponding to models 1b and 1c, but with the addition of the internet adoption predictors, and one outcome model only.
-
-2c takes about 5 hours per 1000 iterations.
-
-```{r}
 bf_2 <- bf(
   val ~ 
     year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb + 
@@ -372,50 +260,70 @@ bf_2_se <- bf(
   unused = ~ cause
 )
 
+bf_2_f <- bf(
+  val ~ 
+    year * sex + year * age + f1_cw * sex + f1_cw * age + f1_cb + 
+    (year * sex + year * age + f1_cw * sex + f1_cw * age | country) +
+    (year * sex + year * age + f1_cw * sex + f1_cw * age | region),
+  family = gaussian(), 
+  unused = ~ cause
+)
 
-# Compile model separately for each outcome to give independent default priors
-fits_2 <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      brm(
-        formula = bf_2, 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2-{cur_group()}")
-      )
-    )
+bf_2_m <- bf(
+  val ~ 
+    year * sex + year * age + m1_cw * sex + m1_cw * age + m1_cb + 
+    (year * sex + year * age + m1_cw * sex + m1_cw * age | country) +
+    (year * sex + year * age + m1_cw * sex + m1_cw * age | region),
+  family = gaussian(),
+  unused = ~ cause
+)
+```
+
+## Fit all models
+
+```{r}
+models <- tibble(
+  model = c("1", "1-se", "2", "2-se", "2-f", "2-m"),
+  formula = list(
+    bf_itu + bf_1 + set_rescor(FALSE),
+    bf_itu + bf_1_se + set_rescor(FALSE),
+    bf_2,
+    bf_2_se,
+    bf_2_f,
+    bf_2_m
   )
+)
+fits <- dat %>% 
+  # Could nest but need this to include group key in nested tibble
+  group_by(cause) %>% 
+  summarise(data = list(cur_data_all())) %>% 
+  crossing(models)
 
-fits_2 <- dat %>%
-  filter(!(cause %in% c("Selfharm"))) %>% 
-  group_by(cause) %>%
-  summarise(
-    fit_se = list(
-      brm(
-        formula = bf_2_se,
-        data = cur_data_all(),
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2-se-{cur_group()}")
-      )
+# Don't estimate se models for selfharm--doesn't converge
+fits <- fits %>% 
+  filter(!(cause=="Selfharm" & str_detect(model, "se")))
+
+# Estimate all models
+fits <- fits %>% 
+  mutate(
+    fit = pmap(
+      list(cause=cause, data=data, model=model, formula=formula),
+      function(cause, data, model, formula)
+        brm(
+          formula = formula,
+          data = data,
+          chains = hmc$chains,
+          cores = hmc$cores,
+          threads = hmc$threads,
+          iter = hmc$iter,
+          warmup = hmc$warmup,
+          refresh = hmc$refresh,
+          control = list(
+            adapt_delta = hmc$adapt_delta,
+            max_treedepth = hmc$max_treedepth
+          ),
+          file = str_glue("output/brm-{model}-{cause}")
+        )
     )
   )
 ```
@@ -425,38 +333,39 @@ fits_2 <- dat %>%
 Diagnostics: convergence and effective samples size
 
 ```{r}
-f2d <- fits_2 %>% 
+diag_1 <- fits %>% 
+  filter(model == "1") %>% 
   mutate(
     out = 
       map(
         fit, 
-        ~as_draws_df(., variable = "^b_|^sd_", regex = TRUE) %>% 
+        ~as_draws_df(., variable = "^b_|^sd_|^cor_", regex = TRUE) %>% 
           summarise_draws(samples = length, default_convergence_measures())
       )
   ) %>% 
   select(-fit) %>% 
   unnest(out)
-f2d %>%  
+diag_1 %>%  
   kbl(
-    caption = "HMC Diagnostics, Model 2c",
+    caption = "HMC Diagnostics, Model 1",
     digits = c(0,0,0,2,0,0)
   ) %>% 
-  kable_paper(html_font = Font, full_width = FALSE) %>% 
+  kable_paper(html_font = Font) %>% 
   column_spec(
     4, 
     color = "white",
     background = spec_color(
-      f2d$rhat, 
+      diag_1$rhat, 
       direction = 1, 
       option = "C", 
       end = .7
     )
-  ) %>% 
-  scroll_box(height = "600px", width = "800px")
+  )
 ```
 
 ```{r}
-tmp <- fits_2 %>% 
+ppcheck_1 <- fits %>% 
+  filter(model == "1")
   mutate(
     out = map(
       fit, 
@@ -468,130 +377,13 @@ tmp <- fits_2 %>%
         resp = "val", 
         newdata = .x$data
       ) + 
-        facet_wrap("group", nrow = 1, scales = "free_y")
+        facet_wrap("group", nrow = 1, scales = "free")
     )
   )
-wrap_plots(tmp$out, nrow = 3) &
+wrap_plots(ppcheck_1$out, nrow = 6) &
   scale_x_continuous(
     breaks = pretty_breaks(2),
-    labels = function(x) percent(x/100, 1)
-  )
+    labels = function(x) percent(x/100)
+  ) &
+  theme(legend.position = "none")
 ```
-
-### Summary
-
-We then display the model's population-level parameters
-
-```{r}
-tmp <- fits_2 %>% 
-  mutate(
-    out = map(
-      fit, 
-      ~as_draws_df(.x, variable = "^b_", regex = TRUE) %>% 
-        summarise_draws(
-          mean, quantile, rhat, 
-          .args = list(probs = c(.025, .975))
-        )
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  mutate(
-    result = str_glue(
-      "b = {mean} ({`2.5%`}, {`97.5%`})"
-    )
-  ) %>% 
-  rowwise() %>% 
-  select(-c(mean, `2.5%`, `97.5%`, rhat)) %>% 
-  pivot_wider(names_from = cause, values_from = result)
-tmp %>%   
-  kbl() %>% 
-  kable_paper(html_font = Font) 
-```
-
-Coefficients
-
-```{r}
-tmp <- fits_2 %>% 
-  mutate(
-    out = map(
-      fit, 
-      ~emtrends(.x, var = "i1_cw", by = c("sex", "age"))
-    )
-  ) %>% 
-  select(-fit)
-tmp %>% 
-  mutate(out = map(out, ~as.data.frame(out))) %>% 
-  unnest(out) %>% 
-  select(cause, sex, age, i1_cw.trend, lower.HPD, upper.HPD) %>% 
-  kbl(digits = 3) %>% 
-  kable_minimal(full_width = FALSE)
-```
-
-## Model 2 for fixed and mobile
-
-```{r}
-bf_2_f <- bf(
-  val ~ 
-    year * sex + year * age + f1_cw * sex + f1_cw * age + f1_cb + 
-    (year * sex + year * age + f1_cw * sex + f1_cw * age | country) +
-    (year * sex + year * age + f1_cw * sex + f1_cw * age | region),
-  family = gaussian(), 
-  unused = ~ cause
-)
-
-fits_2_f <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      brm(
-        formula = bf_2_f, 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2-fixed-{cur_group()}")
-      )
-    )
-  )
-
-bf_2_m <- bf(
-  val ~ 
-    year * sex + year * age + m1_cw * sex + m1_cw * age + m1_cb + 
-    (year * sex + year * age + m1_cw * sex + m1_cw * age | country) +
-    (year * sex + year * age + m1_cw * sex + m1_cw * age | region),
-  family = gaussian(),
-  unused = ~ cause
-)
-
-fits_2_m <- dat %>%
-  group_by(cause) %>% 
-  summarise(
-    fit = list(
-      brm(
-        formula = bf_2_m, 
-        data = cur_data_all(),
-        chains = hmc$chains, 
-        cores = hmc$cores, 
-        threads = hmc$threads,
-        iter = hmc$iter, 
-        warmup = hmc$warmup, 
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta, 
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("output/brm-2-mobile-{cur_group()}")
-      )
-    )
-  )
-```
-
