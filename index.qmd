@@ -1,10 +1,8 @@
 ---
 title: "Adolescent well-being in the digital age"
 author: "Matti Vuorre"
-date: "`r Sys.time()`"
 execute:
-  eval: true
-  error: true
+  enabled: true
   cache: true
   warning: false
   message: false
@@ -12,15 +10,9 @@ format:
   html:
     monofont: Fira Code
     font-size: 1.0em
-    linestretch: 1.4
     code-fold: true
-    code-summary: "Show code"
-    code-tools: true
-    code-link: true
 toc: true
 toc-depth: 4
-toc-title: Contents
-number-sections: false
 crossref:
   fig-prefix: Figure
   tbl-prefix: Table
@@ -131,7 +123,11 @@ theme_set(
     )
 )
 
-# Format tables
+#' Custom kableExtra formatting
+#'
+#' @param a table from kbl()
+#'
+#' @return a table
 kable_custom <- function(x) {
   kable_classic(
     kable_input = x,
@@ -855,7 +851,6 @@ dat <- dat %>%
 We then create a table where each row is a dataset and a model to be fitted, and then fit the models row-by-row. This takes about a day for the six outcomes.
 
 ```{r fit-model-1}
-
 fits <- dat %>%
   # Could nest but need this to include group key in nested tibble
   group_by(outcome) %>%
@@ -892,6 +887,12 @@ Here is a summary of the data modelled for each outcome
 #| column: body-outset
 #| tbl-cap: "Summaries of data included in Model 1"
 #| label: tbl-m1-data
+
+#' Model summary
+#'
+#' @param x a brmsfit
+#'
+#' @return A tibble with information on data in the model
 msum <- function(x) {
   tibble(
     regions = ngrps(x)$region,
@@ -908,6 +909,7 @@ msum <- function(x) {
     )
   )
 }
+
 fits %>%
   mutate(summary = map(fit1, msum)) %>%
   select(outcome, summary) %>%
@@ -987,10 +989,10 @@ diagnostic_table(
 We then take a coarse look at how well the models reproduce the input data.
 
 ```{r ppcheck-density}
-
 #| column: page
 #| fig-cap: "Graphical posterior predictive check by region (Model 1). Thin red lines indicate model replicates, whereas the blue lines indicate data; the model is mostly in smooth agreement with data, but has greater discrepancies in some regions (e.g. Anglo Depression)."
 #| label: fig-ppcheck-1
+
 ppcheck_1 <- fits %>%
   group_by(outcome) %>%
   mutate(
@@ -1031,6 +1033,7 @@ ppcheck_1 %>%
     axis.text = element_blank(),
     axis.ticks = element_blank()
   )
+rm(ppcheck_1)
 ```
 
 ### Results
@@ -1040,8 +1043,6 @@ ppcheck_1 %>%
 Before presenting the time trends, we must calculate the required quantities from the posterior distribution. Here we calculate posterior *samples* of region and average-level trends over time, and posterior *summaries* of trends at all levels.
 
 ```{r calculate-simple-effects}
-
-
 #' Posterior draws at average and region levels
 #'
 #' @param x brmsfit (model 1/2)
@@ -1538,7 +1539,6 @@ left_join(
 It's important to note that at the level of countries and regions, the model parameters refer to country^\*^ and region^\*^, that is as they are in the sample of other countries and regions. This modelling strategy is important because it allows describing the parameters at each level while adjusting the values toward the group means (preventing "false alarms"). However it is then important to examine those values against their "fixed effect" counterparts, which we do here.
 
 ```{r shrinkage}
-
 #| column: screen-inset
 #| fig-width: 14
 #| fig-height: 9
@@ -1744,7 +1744,6 @@ fits <- fits %>%
 First, we compared the R2 values between Models 1 and 2. This comparison is not perfect because the datasets differed slightly (each country had at least 1 fewer values in Model 2 because of the inclusion of the lagged internet predictor in Model 2). However it gives a rough idea of the added explanatory power of internet adoption on the well-being outcomes.
 
 ```{r model21-compare}
-
 #| results: hold
 #| tbl-cap: "Model 1 and 2 proportions variance explained by outcome"
 #| label: tbl-m12-r2
@@ -1775,8 +1774,6 @@ fits %>%
 Before we can present the results, we calculate the "internet effect" at each of three levels of analysis; the average, region, and country-level.
 
 ```{r model2-calculate-coefficients}
-
-
 p_draws <- fits %>%
   mutate(pdraws = map(fit2, ~pdraws(.x, "i1_cw"))) %>%
   select(outcome, pdraws) %>%
@@ -1886,7 +1883,6 @@ This figure shows that, on the whole, the predictive associations between intern
 To help illustrate the magnitudes of associations, we draw figures of the fitted lines, or so called counterfactual plots.
 
 ```{r model2-fitted-values}
-
 #| column: screen-inset
 #| fig-width: 14
 #| fig-height: 9
@@ -1983,8 +1979,9 @@ f_country %>%
 We then focused on the between-country association between internet adoption and well-being. Recall that the model does not adjust for between-country differences so these associations are likely to reflect many other factors covarying with internet adoption (e.g. wealth and development factors).
 
 ```{r}
-#| fig.width: 6
-#| fig.height: 4
+#| column: page
+#| fig.width: 8
+#| fig.height: 6
 #| fig-cap: "Between-country associations"
 #| label: fig-cb1
 
@@ -2001,7 +1998,7 @@ fitted_cb1 <- function(x) {
       fitted(
         x, 
         newdata = newx, 
-        re_formula = NULL
+        re_formula = NA
         )
     )
   ) %>%
@@ -2039,8 +2036,7 @@ tmp %>%
     labels = ~percent(./100)
   ) +
   geom_point(
-    shape = 1, size = 1, alpha = .75,
-    aes(col = region)
+    shape = 1, size = 1, alpha = .75
   ) +
   geom_ribbon(
     aes(ymin = Q2.5, ymax = Q97.5),
@@ -2071,8 +2067,11 @@ We then turn to the third research question, to what extent are the changes in w
 ### Trends
 
 ```{r model1-demographics}
-
-
+#| column: screen-inset
+#| fig-width: 14
+#| fig-height: 9
+#| fig-cap: "Forest plot of linear trends in outcomes by demographic group"
+#| label: fig-forest-trends-demo
 h_gwp <- c(
   `15 to 19` =
     "val_year + val_year:age1 * 1 = 0",
@@ -2288,8 +2287,11 @@ sexage_draws %>%
 ### Associations
 
 ```{r model2-demographics}
-
-
+#| column: screen-inset
+#| fig-width: 14
+#| fig-height: 9
+#| fig-cap: "Forest plot of associations by demographic group"
+#| label: fig-forest-association-demo
 h_gwp <- c(
   `15 to 19` =
     "i1_cw + age1:i1_cw * 1 = 0",
