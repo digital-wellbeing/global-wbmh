@@ -2036,12 +2036,11 @@ tmp %>%
     labels = ~percent(./100)
   ) +
   geom_point(
-    shape = 1, size = 1, alpha = .75
+    shape = 1, size = 1, alpha = .75, col = "dodgerblue1"
   ) +
   geom_ribbon(
     aes(ymin = Q2.5, ymax = Q97.5),
-    fill = "dodgerblue2",
-    alpha = .2
+    alpha = .2, fill = "dodgerblue1"
     ) +
   geom_line(aes(y = Estimate), col = "dodgerblue4") +
   geom_text(
