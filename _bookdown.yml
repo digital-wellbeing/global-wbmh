@@ -1,9 +1,0 @@
-book_filename: "Global-WB"
-output_dir: "docs"
-new_session: true
-delete_merged_file: true
-view: https://github.com/digital-wellbeing/global-wbmh/blob/main/%s
-edit: https://github.com/digital-wellbeing/global-wbmh/edit/main/%s
-language:
-  ui:
-    chapter_name: ""
