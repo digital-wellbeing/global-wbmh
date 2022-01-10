@@ -8,6 +8,7 @@
 data-raw/*
 !data-raw/Regions/
 !data-raw/GBD/
+!data-raw/gwp-MOCK.rds
 output/
 docs/
 models/
