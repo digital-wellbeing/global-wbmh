@@ -1,0 +1,571 @@
+# Time courses
+
+```{r setup}
+#| cache: false
+# Packages
+library(scales)
+library(ggtext)
+library(lubridate)
+library(kableExtra)
+library(ggstance)
+library(mgcv)
+library(brms)
+library(cmdstanr)
+library(ellipse)
+library(ggh4x)
+library(tidybayes)
+library(ggdist)
+library(posterior)
+library(parameters)
+library(emmeans)
+library(broom)
+library(tidyverse)
+```
+
+```{r load}
+#| cache: false
+# Load data sets
+itu <- read_rds("data/itu.rds")
+gwp <- read_rds("data/gwp.rds")
+gbd <- read_rds("data/gbd.rds")
+
+# Load models
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+fits <- tibble(outcome = oo) %>% 
+  mutate(outcome = factor(outcome, levels = oo)) %>% 
+  mutate(
+    fit1 = map(
+      outcome, 
+      ~read_rds(str_glue("models/brm-{.x}-1-internet.rds"))
+    )
+  )
+```
+
+Our first research question concerns changes in mental health and well-being over time: To what extent has adolescent mental health changed over time (RQ1a)? And, do changes in well-being correlate with changes in internet adoption (RQ1b)? To answer, we examine Model 1's results.
+
+## Results
+
+### RQ1a: Temporal trends
+
+Before presenting the time trends, we must calculate the required quantities from the posterior distribution. Here we calculate posterior *samples* of region and average-level trends over time, and posterior *summaries* of trends at all levels.
+
+```{r calculate-simple-effects}
+p_draws <- fits %>%
+  mutate(pdraws = map(fit1, pdraws)) %>%
+  select(outcome, pdraws) %>%
+  unnest(pdraws) %>%
+  mutate(region = fct_relevel(region, "Average"))
+p_sums <- fits %>%
+  mutate(psums = map(fit1, psums)) %>%
+  select(outcome, psums) %>%
+  unnest(psums) %>%
+  mutate(region = fct_relevel(region, "Average"))
+p_sums_internet <- fits %>%
+  mutate(psums = map(fit1, ~ psums(.x, "internet_year"))) %>%
+  select(outcome, psums) %>%
+  unnest(psums) %>%
+  mutate(region = fct_relevel(region, "Average"))
+```
+
+We then display the average ($\beta^y_1$), region- ($\delta^y_1$), and country-level ($\gamma^y_1$ in @eq-model1) time trend parameters' posterior distributions. Recall the scales of the variables when interpreting the magnitudes: Year is in decades and outcomes are percentages (0-100).
+
+```{r forest-trends}
+#| column: screen-inset-right
+#| fig-width: 13
+#| fig-height: 8
+#| fig-cap: "Forest plot of linear trends in outcomes"
+#| label: fig-forest-trends
+p_draws %>%
+  mutate(is_average = region == "Average") %>%
+  ggplot(aes(value, region, fill = is_average)) +
+  scale_fill_manual(values = c("dodgerblue1", "dodgerblue4")) +
+  scale_alpha_manual(values = c(.4, .8)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_shape_manual(values = c(21, 19)) +
+  scale_y_discrete(
+    expand = expansion(c(0.01, .1)),
+    labels = function(x) {
+      if_else(x == "Average", "**Average**", x) %>%
+        str_replace("_", " ")
+    }
+  ) +
+  scale_x_continuous(
+    "Estimated linear change per decade",
+    breaks = pretty_breaks(),
+    labels = function(x) percent(x / 100, .01) %>% str_remove("\\.00"),
+    expand = expansion(c(.1, .1))
+  ) +
+  stat_halfeye(
+    point_interval = NULL, normalize = "panels",
+    height = .75, adjust = 1,
+    aes(alpha = is_average)
+  ) +
+  # Add country points
+  geom_point(
+    data = p_sums %>%
+      drop_na(country) %>%
+      mutate(is_average = TRUE),
+    aes(x = Estimate), size = 1, col = "dodgerblue1",
+    position = position_nudge(0, -0.075), alpha = .4
+  ) +
+  stat_pointinterval(
+    alpha = 1, .width = c(.95),
+    interval_size = 1,
+    point_size = 1.75,
+    fill = "white",
+    aes(shape = after_stat(xmin > 0 | xmax < 0)),
+    position = position_nudge(0, 0)
+  ) +
+  geom_richtext(
+    data = p_sums %>%
+      filter(is.na(country)) %>%
+      mutate(is_average = region == "Average") %>%
+      mutate(
+        across(
+          where(is.numeric),
+          ~ if_else(
+            outcome == "Selfharm",
+            percent(. / 100, .001),
+            percent(. / 100, .01)
+          )
+        )
+      ),
+    family = Font,
+    alpha = 1, size = 3, hjust = 1, vjust = 0.2,
+    fill = NA, label.color = NA,
+    aes(
+      x = Inf,
+      label = str_glue("{Estimate}<br>[{Q2.5}, {Q97.5}]")
+    )
+  ) +
+  facet_wrap(
+    "outcome",
+    nrow = 2, scales = "free_x",
+    labeller = as_labeller(~ str_replace(., "_", " "))
+  ) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "none"
+  )
+```
+
+Starting from the top left panel, the average (across countries and regions) change in life satisfaction. This change is not credibly different from zero, at the 95% credibility level, and the posterior mean value of change was a 1% increase in life satisfaction per decade. The region-specific changes were likewise not credibly different from zero, apart from the Eastern Europe region that indicated a modest increase in life satisfaction.
+
+Because we modelled regions (and countries) as draws from a multivariate normal prior distribution, the region-specific estimates are shrunk toward the overall mean and therefore less likely to overfit any individual region's data. This means that the model is less likely to report "false alarms", or estimates at the region- and country-levels that indicate false certainty in nonzero changes. Therefore, although there are a large number of change parameters for each individual outcome, we can be fairly certain that the observed change in Eastern Europe is not due to sampling error but represents a real trend in that population.
+
+We observe credible increases in negative experiences in more regions, with notably a \~10% increase per decade in the African region. However, the average change again is not credibly different from zero. Positive experiences had increased, both on average and across 7/10 regions, with very similar changes in Anxiety. Depression and self-harm, on the other hand, had decreased across the board.
+
+In sum these results were somewhat mixed, where some regions showing both increases (e.g. decreased depression) and decreases (increased anxiety) in well-being.
+
+Then to help illustrate the parameters, we draw figures of the fitted lines conditional on the predictors, or so called counterfactual plots.
+
+```{r fitted-trend-country}
+f_country <- fits %>%
+  mutate(fc = map(fit1, fitted_country)) %>%
+  select(outcome, fc)
+
+#' Draw a panel plot of countries' fitted values and data
+#'
+#' @param x fitted country level data from fitted_country()
+#' @param y outcome
+#'
+#' @return a ggplot for that outcome
+plot_country <- function(x, y) {
+  coefs <- p_sums %>%
+    drop_na(country) %>%
+    filter(outcome == y) %>%
+    select(country, coef = Estimate, coef.l = Q2.5, coef.u = Q97.5) %>%
+    mutate(country = fct_reorder(country, coef))
+  x %>%
+    left_join(coefs) %>%
+    mutate(country = fct_reorder(country, coef)) %>%
+    ggplot(aes(make_date(year * 10 + 2010), Estimate)) +
+    scale_x_date("Year", date_breaks = "5 years", date_labels = "'%y") +
+    scale_y_continuous(
+      str_replace(y, "_", " "),
+      breaks = pretty_breaks(),
+      expand = expansion(.15),
+      labels = function(x) {
+        percent(x / 100, .01) %>%
+          str_remove("\\.00")
+      }
+    ) +
+    # Add parameters in text
+    geom_richtext(
+      data = coefs %>%
+        mutate(across(where(is.numeric), ~ number(., .01))),
+      aes(
+        x = make_date(2000), y = Inf,
+        label = str_glue("{coef}<br>[{coef.l}, {coef.u}]")
+      ),
+      size = 2.4, vjust = 1, hjust = 0.05, color = "black",
+      family = Font,
+      fill = alpha("white", .3), label.color = NA,
+      label.padding = unit(c(0.1, 0.1, 0.1, 0.1), "lines")
+    ) +
+    geom_point(aes(y = val), shape = 1, alpha = .5) +
+    geom_ribbon(
+      aes(ymin = Q2.5, ymax = Q97.5),
+      alpha = .3, col = NA, fill = "dodgerblue1"
+    ) +
+    geom_line(
+      size = 0.5, col = "dodgerblue1"
+    ) +
+    facet_wrap(
+      "country"
+    ) +
+    theme(
+      panel.spacing = unit(2, "pt")
+    )
+}
+
+# Create the plot for each outcome
+f_country <- f_country %>%
+  mutate(
+    plot = map2(
+      fc, outcome,
+      ~ plot_country(.x, .y)
+    )
+  )
+```
+
+::: {.panel-tabset .column-screen-inset-right}
+#### All outcomes
+
+```{r trends-regions}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Trends in all variables across regions"
+#| label: fig-trends-regions
+
+# Stack data sets
+# Assume all outcomes are proportions (0-1)
+dat_all <- bind_rows(
+  gwp,
+  gbd,
+  itu %>% mutate(outcome = "Internet", val = internet)
+) %>%
+  mutate(outcome = fct_inorder(str_replace(outcome, "_", "_"))) %>%
+  group_by(region, country, year, outcome) %>%
+  summarise(mean = mean(val, na.rm = TRUE)) %>%
+  ungroup()
+
+# Draw small multiples figure, outcomes x regions
+dat_all %>% 
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(year, mean)) +
+  scale_y_continuous(
+    "Value",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    date_breaks = "5 years",
+    date_labels = "'%y",
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country, outcome)),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line",
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_grid(
+    outcome ~ region,
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "none",
+    panel.spacing = unit(3, "pt"),
+    axis.title.y = element_blank()
+  )
+```
+
+#### Life satisfaction
+
+```{r trends-ls}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Life satisfaction trends, ordered by association magnitude"
+#| label: fig-trends-ls
+f_country$plot[[1]]
+```
+
+#### Negative experiences
+
+```{r trends-ne}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Negative experiences trends, ordered by association magnitude"
+#| label: fig-trends-ne
+f_country$plot[[2]]
+```
+
+#### Positive experiences
+
+```{r trends-pe}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Positive experiences trends, ordered by association magnitude"
+#| label: fig-trends-pe
+f_country$plot[[3]]
+```
+
+#### Anxiety
+
+```{r trends-anx}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Anxiety trends, ordered by association magnitude"
+#| label: fig-trends-anx
+f_country$plot[[4]]
+```
+
+#### Depression
+
+```{r trends-dep}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Depression trends, ordered by association magnitude"
+#| label: fig-trends-dep
+f_country$plot[[5]]
+```
+
+#### Self-harm
+
+```{r trends-sel}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 10
+#| fig-cap: "Self-harm trends, ordered by association magnitude"
+#| label: fig-trends-sel
+f_country$plot[[6]]
+```
+:::
+
+### RQ1b: Correlations
+
+We then turned to research question 1b: To what extent were changes in well-being and internet adoption correlated across countries.
+
+To investigate we examined the correlations between $\gamma^y_1$ and $\gamma^x_1$ ($\sigma_{\gamma^y_1,\gamma^x_1}$ in $\Sigma^{\text{c}}$). A positive correlation would indicate that countries with greater increases in internet adoption between 2000 and 2020 would tend to have greater increases in $y$ (e.g. Life satisfaction).
+
+To answer, we display $\sigma_{\gamma^y_1,\gamma^x_1}$ from each outcome's model in the figure below. The figures are scatterplots of country-level trend coefficients, where each point's x-y coordinate indicate their trend magnitudes. The overlaid ellipses are the model's 95% predictive limits for $\gamma^y_1$ and $\gamma^x_1$.
+
+```{r scatterplot-time-internet}
+#| column: screen-inset-right
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Scatterplots of country-level internet and outcome trends."
+#| label: fig-trend-scatterplot
+
+# Correlation parameters
+cor_pars <- fits %>%
+  mutate(
+    out = map(
+      fit1,
+      ~ as_draws_df(
+        .x,
+        variable = "cor_country__internet_year__val_year"
+      ) %>%
+        summarise_draws(mean, sd, ~ quantile2(., probs = c(.025, .975)))
+    )
+  ) %>%
+  select(outcome, out) %>%
+  unnest(out) %>%
+  mutate(across(where(is.numeric), ~ number(., .01)))
+
+# Ellipses
+ellipses <- fits %>%
+  mutate(
+    ellipse = map(
+      fit1,
+      ~ as_draws_df(
+        .x,
+        c(
+          "b_val_year",
+          "b_internet_year",
+          "sd_country__val_year",
+          "sd_country__internet_year",
+          "cor_country__internet_year__val_year"
+        )
+      ) %>%
+        slice_sample(n = 100) %>%
+        rename(
+          cor = cor_country__internet_year__val_year,
+          sd_outcome = sd_country__val_year,
+          sd_i = sd_country__internet_year,
+          b_outcome = b_val_year,
+          b_i = b_internet_year
+        ) %>%
+        mutate(
+          e = pmap(
+            list(cor, sd_outcome, sd_i, b_outcome, b_i),
+            function(cor, sd_a, sd_i, b_a, b_i) {
+              ellipse(
+                cor,
+                scale = c(sd_i, sd_outcome),
+                centre = c(b_i, b_outcome),
+                level = .95
+              ) %>%
+                as_tibble()
+            }
+          )
+        ) %>%
+        unnest(e)
+    )
+  )
+ellipses <- ellipses %>%
+  select(outcome, ellipse) %>%
+  unnest(ellipse)
+
+# Wide tibble of parameters
+left_join(
+  p_sums %>%
+    drop_na(country) %>%
+    rename_with(~ str_glue("Outcome_{.}"), .cols = c(Estimate:Q97.5)),
+  p_sums_internet %>%
+    drop_na(country) %>%
+    rename_with(~ str_glue("Internet_{.}"), .cols = c(Estimate:Q97.5))
+) %>%
+  ggplot(aes(Internet_Estimate, Outcome_Estimate)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_path(
+    data = ellipses,
+    aes(x = x, y = y, group = .draw),
+    alpha = .2, size = .1, col = "dodgerblue2"
+  ) +
+  geom_point(col = "dodgerblue1", size = 1, alpha = .5) +
+  scale_y_continuous(
+    "Outcome trend",
+    breaks = pretty_breaks(),
+    labels = function(x) percent(x / 100, .01) %>% str_remove("\\.00")
+  ) +
+  scale_x_continuous(
+    "Internet trend",
+    breaks = pretty_breaks()
+  ) +
+  geom_text(
+    data = cor_pars,
+    aes(x = -Inf, y = Inf, label = str_glue("{mean} [{q2.5}, {q97.5}]")),
+    vjust = 1.3, hjust = -0.025, family = Font
+  ) +
+  facet_wrap(
+    "outcome",
+    scales = "free_y",
+    labeller = as_labeller(~ str_replace(., "_", " "))
+  ) +
+  theme(aspect.ratio = 1)
+```
+
+### Other results from Model 1
+
+#### Shrinkage
+
+It's important to note that at the level of countries and regions, the model parameters refer to country^\*^ and region^\*^, that is as they are in the sample of other countries and regions. This modelling strategy is important because it allows describing the parameters at each level while adjusting the values toward the group means (preventing "false alarms"). However it is then important to examine those values against their "fixed effect" counterparts, which we do here.
+
+```{r shrinkage}
+#| column: screen-inset-right
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Scatterplots of multilevel and independent model coefficients"
+#| label: fig-trend-shrinkage
+
+lm_coefs <- fits %>%
+  mutate(
+    data = map(fit1, ~ as_tibble(.x$data))
+  ) %>%
+  mutate(
+    fit_val = map(
+      data,
+      ~ tidy(
+        lm(val ~ 0 + country + year:country, data = .x)
+      )
+    ),
+    fit_internet = map(
+      data,
+      ~ tidy(
+        gam(
+          internet ~ 0 + country + year:country,
+          family = betar, data = .x %>%
+            filter(itu)
+        ),
+        parametric = TRUE
+      )
+    )
+  )
+lm_coefs <- lm_coefs %>%
+  select(outcome, fit_val, fit_internet) %>%
+  pivot_longer(c(fit_val, fit_internet)) %>%
+  mutate(name = str_remove(name, "fit_")) %>%
+  unnest(value) %>%
+  select(outcome, name, term, estimate, std.error) %>%
+  filter(str_detect(term, ":")) %>%
+  mutate(term = str_remove(term, "country")) %>%
+  mutate(term = str_remove(term, ":year")) %>%
+  pivot_wider(names_from = name, values_from = c(estimate, std.error)) %>%
+  rename(country = term)
+
+# Plot
+left_join(
+  p_sums %>%
+    drop_na(country) %>%
+    rename_with(~ str_glue("Outcome_{.}"), .cols = c(Estimate:Q97.5)),
+  p_sums_internet %>%
+    drop_na(country) %>%
+    rename_with(~ str_glue("Internet_{.}"), .cols = c(Estimate:Q97.5))
+) %>%
+  left_join(lm_coefs) %>%
+  mutate(region = str_replace(region, "_", " ")) %>%
+  ggplot(aes(Internet_Estimate, Outcome_Estimate, col = region)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_segment(
+    aes(
+      x = estimate_internet, xend = Internet_Estimate,
+      y = estimate_val, yend = Outcome_Estimate
+    ),
+    arrow = arrow(type = "closed", length = unit(3, "pt")),
+    size = .25, show.legend = FALSE
+  ) +
+  geom_point(size = 1.1, alpha = .4) +
+  scale_y_continuous(
+    "Outcome trend",
+    breaks = pretty_breaks(),
+    labels = function(x) percent(x / 100, .01) %>% str_remove("\\.00")
+  ) +
+  scale_x_continuous(
+    "Internet trend",
+    breaks = pretty_breaks()
+  ) +
+  scale_color_discrete("Region") +
+  facet_wrap(
+    "outcome",
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", " "))
+  ) +
+  guides(
+    color = guide_legend(override.aes = list(size = 2, alpha = 1))
+  ) +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "bottom"
+  )
+```
+
+This figure indicates, for each country's internet trend and outcome trend parameters, the degree of shrinkage. That is, the start of each arrow indicates the magnitudes from a simple linear regression for that country. The end of the arrow indicates the magnitudes from the multilevel regression model. We can then see that especially for countries further away from the overall mean effects, there was considerable shrinkage. It is important to keep this in mind when interpreting the country-level parameters.

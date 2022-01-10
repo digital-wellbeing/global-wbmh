@@ -1,0 +1,326 @@
+## Demographics
+
+```{r setup}
+#| cache: false
+# Packages
+library(scales)
+library(ggtext)
+library(lubridate)
+library(kableExtra)
+library(ggstance)
+library(mgcv)
+library(brms)
+library(cmdstanr)
+library(ellipse)
+library(ggh4x)
+library(tidybayes)
+library(ggdist)
+library(posterior)
+library(parameters)
+library(emmeans)
+library(broom)
+library(dtplyr)
+library(tidyverse)
+```
+
+
+```{r}
+# Load data sets
+itu <- read_rds("data/itu.rds")
+gwp <- read_rds("data/gwp.rds")
+gbd <- read_rds("data/gbd.rds")
+
+# Load models
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+fits <- tibble(outcome = oo) %>% 
+  mutate(outcome = factor(outcome, levels = oo)) %>% 
+  mutate(
+    fit1 = map(
+      outcome, 
+      ~read_rds(str_glue("models/brm-{.x}-1-internet.rds"))
+    ),
+    fit2 = map(
+      outcome, 
+      ~read_rds(str_glue("models/brm-{.x}-2-internet.rds"))
+    )
+  )
+```
+
+We then turn to the third research question, to what extent are the changes in well-being, and associations between internet adoption and well-being different between the different demographic groups within adolescents? To answer, Models 1 and 2 also included age and sex as moderators of the trends and associations. In this section, we present results based on the moderated effects.
+
+### Trends
+
+```{r model1-demographics}
+#| column: screen-inset-right
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Forest plot of linear trends in outcomes by demographic group"
+#| label: fig-forest-trends-demo
+h_gwp <- c(
+  `15 to 19` =
+    "val_year + val_year:age1 * 1 = 0",
+  `20 to 24` =
+    "val_year + val_year:age1 * -1 = 0",
+  `Female` =
+    "val_year + val_year:sex1 * 1 = 0",
+  `Male` =
+    "val_year + val_year:sex1 * -1 = 0"
+)
+h_gbd <- c(
+  `10 to 14` =
+    "val_year + val_year:age1 * 1 + val_year:age2 * 0 = 0",
+  `15 to 19` =
+    "val_year + val_year:age1 * 0 + val_year:age2 * 1 = 0",
+  `20 to 24` =
+    "val_year + val_year:age1 * -1 + val_year:age2 * -1 = 0",
+  `Female` =
+    "val_year + val_year:sex1 * 1 = 0",
+  `Male` =
+    "val_year + val_year:sex1 * -1 = 0"
+)
+
+sexage_draws <- fits %>%
+  mutate(h = list(h_gwp, h_gwp, h_gwp, h_gbd, h_gbd, h_gbd)) %>%
+  mutate(
+    samples = map2(
+      fit1, h,
+      ~ simple_effects_samples(.x, .y)
+    )
+  ) %>%
+  select(outcome, samples) %>%
+  unnest(samples)
+sexage_sums <- fits %>%
+  mutate(h = list(h_gwp, h_gwp, h_gwp, h_gbd, h_gbd, h_gbd)) %>%
+  mutate(
+    sums = map2(
+      fit1, h,
+      ~ simple_effects_summary(.x, .y)
+    )
+  ) %>%
+  select(outcome, sums) %>%
+  unnest(sums)
+
+sexage_draws <- sexage_draws %>%
+  mutate(f = if_else(str_detect(Hypothesis, "ale"), "Sex", "Age")) %>%
+  mutate(is_average = region == "Average") %>%
+  mutate(region = fct_relevel(region, "Average")) %>%
+  mutate(
+    side = if_else(Hypothesis %in% c("15 to 19", "Female"), "top", "bottom")
+  )
+
+sexage_sums <- sexage_sums %>%
+  mutate(f = if_else(str_detect(Hypothesis, "ale"), "Sex", "Age")) %>%
+  mutate(region = fct_relevel(region, "Average"))
+
+# Plot averages and regions
+sexage_draws %>%
+  ggplot(aes(value, region, fill = Hypothesis, col = Hypothesis)) +
+  scale_color_brewer(
+    "Group",
+    palette = "Dark2",
+    aesthetics = c("fill", "color")
+  ) +
+  scale_alpha_manual(values = c(.4, .8), guide = "none") +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_shape_manual(values = c(21, 19), guide = "none") +
+  scale_y_discrete(
+    expand = expansion(c(0.01, .1)),
+    labels = function(x) {
+      if_else(x == "Average", "**Average**", x) %>%
+        str_replace("_", " ")
+    }
+  ) +
+  scale_x_continuous(
+    "Estimated linear change per decade",
+    breaks = pretty_breaks(3),
+    labels = function(x) {
+      percent(x / 100, .01) %>%
+        str_remove("\\.00") %>%
+        str_remove("(?<=[0-9])0")
+    },
+    expand = expansion(c(-.05, -.05))
+  ) +
+  stat_halfeye(
+    point_interval = mean_qi, normalize = "xy",
+    height = 1, alpha = .5, point_fill = "white",
+    .width = .95, interval_alpha = 1, interval_size = .2,
+    point_alpha = 1, point_size = 1.5, stroke = .5,
+    aes(
+      shape = after_stat(xmin > 0 | xmax < 0)
+    ),
+    position = position_dodge(.8),
+    key_glyph = draw_key_point
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(size = 3, alpha = 1),
+      nrow = 2, ncol = 3, byrow = TRUE
+    ),
+    fill = guide_legend(
+      nrow = 2, ncol = 3, byrow = TRUE
+    )
+  ) +
+  # Add country points
+  # geom_point(
+  #   data = sexage_sums %>%
+  #     drop_na(country) %>%
+  #     mutate(is_average = TRUE),
+  #   aes(
+  #     x = Estimate,
+  #     shape = CI.Lower > 0 | CI.Upper < 0,
+  #     group = interaction(country, Hypothesis),
+  #     ),
+  #   position = position_dodgev(.7),
+  #   size = .5, alpha = .3
+  # ) +
+  facet_wrap(
+    "outcome",
+    scales = "free_x", nrow = 1,
+    labeller = as_labeller(~ str_replace(., "_", " "))
+  ) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "bottom"
+  )
+```
+
+### Associations
+
+```{r model2-demographics}
+#| column: screen-inset-right
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Forest plot of associations by demographic group"
+#| label: fig-forest-association-demo
+h_gwp <- c(
+  `15 to 19` =
+    "i1_cw + age1:i1_cw * 1 = 0",
+  `20 to 24` =
+    "i1_cw + age1:i1_cw * -1 = 0",
+  `Female` =
+    "i1_cw + sex1:i1_cw * 1 = 0",
+  `Male` =
+    "i1_cw + sex1:i1_cw * -1 = 0"
+)
+h_gbd <- c(
+  `10 to 14` =
+    "i1_cw + age1:i1_cw * 1 + age2:i1_cw * 0 = 0",
+  `15 to 19` =
+    "i1_cw + age1:i1_cw * 0 + age2:i1_cw * 1 = 0",
+  `20 to 24` =
+    "i1_cw + age1:i1_cw * -1 + age2:i1_cw * -1 = 0",
+  `Female` =
+    "i1_cw + sex1:i1_cw * 1 = 0",
+  `Male` =
+    "i1_cw + sex1:i1_cw * -1 = 0"
+)
+
+sexage_draws <- fits %>%
+  mutate(h = list(h_gwp, h_gwp, h_gwp, h_gbd, h_gbd, h_gbd)) %>%
+  mutate(
+    samples = map2(
+      fit2, h,
+      ~ simple_effects_samples(.x, .y)
+    )
+  ) %>%
+  select(outcome, samples) %>%
+  unnest(samples)
+sexage_sums <- fits %>%
+  mutate(h = list(h_gwp, h_gwp, h_gwp, h_gbd, h_gbd, h_gbd)) %>%
+  mutate(
+    sums = map2(
+      fit2, h,
+      ~ simple_effects_summary(.x, .y)
+    )
+  ) %>%
+  select(outcome, sums) %>%
+  unnest(sums)
+
+sexage_draws <- sexage_draws %>%
+  mutate(f = if_else(str_detect(Hypothesis, "ale"), "Sex", "Age")) %>%
+  mutate(is_average = region == "Average") %>%
+  mutate(region = fct_relevel(region, "Average")) %>%
+  mutate(
+    side = if_else(Hypothesis %in% c("15 to 19", "Female"), "top", "bottom")
+  )
+
+sexage_sums <- sexage_sums %>%
+  mutate(f = if_else(str_detect(Hypothesis, "ale"), "Sex", "Age")) %>%
+  mutate(region = fct_relevel(region, "Average"))
+
+# Plot averages and regions
+sexage_draws %>%
+  ggplot(aes(value, region, fill = Hypothesis, col = Hypothesis)) +
+  scale_color_brewer(
+    "Group",
+    palette = "Dark2",
+    aesthetics = c("fill", "color")
+  ) +
+  scale_alpha_manual(values = c(.4, .8), guide = "none") +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  scale_shape_manual(values = c(21, 19), guide = "none") +
+  scale_y_discrete(
+    expand = expansion(c(0.01, .1)),
+    labels = function(x) {
+      if_else(x == "Average", "**Average**", x) %>%
+        str_replace("_", " ")
+    }
+  ) +
+  scale_x_continuous(
+    "Conditional effect of 100% increase in internet adoption on outcome",
+    breaks = pretty_breaks(3),
+    labels = function(x) {
+      percent(x / 100, .01) %>%
+        str_remove("\\.00") %>%
+        str_remove("(?<=[0-9])0")
+    },
+    expand = expansion(c(-.05, -.05))
+  ) +
+  stat_halfeye(
+    point_interval = mean_qi, normalize = "xy",
+    height = 1, alpha = .5, point_fill = "white",
+    .width = .95, interval_alpha = 1, interval_size = .2,
+    point_alpha = 1, point_size = 1.5, stroke = .5,
+    aes(
+      shape = after_stat(xmin > 0 | xmax < 0)
+    ),
+    position = position_dodge(.8),
+    key_glyph = draw_key_point
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(size = 3, alpha = 1),
+      nrow = 2, ncol = 3, byrow = TRUE
+    ),
+    fill = guide_legend(
+      nrow = 2, ncol = 3, byrow = TRUE
+    )
+  ) +
+  # Add country points
+  # geom_point(
+  #   data = sexage_sums %>%
+  #     drop_na(country) %>%
+  #     mutate(is_average = TRUE),
+  #   aes(
+  #     x = Estimate,
+  #     shape = CI.Lower > 0 | CI.Upper < 0,
+  #     group = interaction(country, Hypothesis),
+  #     ),
+  #   position = position_dodgev(.7),
+  #   size = .5, alpha = .3
+  # ) +
+  facet_wrap(
+    "outcome",
+    scales = "free_x", nrow = 1,
+    labeller = as_labeller(~ str_replace(., "_", " "))
+  ) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_markdown(),
+    legend.position = "bottom"
+  )
+```

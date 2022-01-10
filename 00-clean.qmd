@@ -1,0 +1,622 @@
+# Data preparation {.unnumbered}
+
+```{r setup}
+#| cache: false
+# Packages
+library(readxl)
+library(imputeTS)
+library(naniar)
+library(scales)
+library(janitor)
+library(haven)
+library(labelled)
+library(countrycode)
+library(lubridate)
+library(gtsummary)
+library(kableExtra)
+library(tidyverse)
+
+# Create directory for intermediate files
+dir.create("data", FALSE)
+```
+
+In this first section, we load the raw data sets and prepare them for analyses.
+
+## Gallup World Poll
+
+We first prepare the Gallup data. The Gallup World Poll is a proprietary dataset and includes people's responses to well-being questions across \~160 countries from 2015 to 2021. 
+
+Note that this data set is not publicly available, and therefore not included in our repository. We provide a synthetic mock dataset for researchers who would like to reproduce our analyses but do not have access to the GWP dataset. 
+
+```{r gallup-codebook}
+#| echo: false
+#| eval: false
+# Understand variables & values
+# Codes NOTE 1: yes 2: no!
+read_spss(
+  "data-raw/Gallup/The_Gallup_101521.sav",
+  n_max = 1,
+  col_select = c(
+    WPID, WP1219,
+    WP16,
+    WP60, WP61, WP63, WP65, WP67,
+    WP68, WP69, WP70, WP71, WP74
+  )
+) %>%
+  generate_dictionary()
+```
+
+Here we import the relevant variables from Gallup's SPSS files and then
+
+-   Clean the variable names
+-   Set appropriate missing values (`NaN`, not e.g. `-99`)
+-   Use appropriate coding schemes (e.g. 0: no; 1: yes)
+-   Calculate scale scores (means over items)
+-   Rescale outcomes to proportions (0 - 1)
+-   Subset the data to 15 to 24 year olds
+-   Create age-categories in line with GBD data
+-   Drop one 13 year old as this data should only have people 15 and older
+
+```{r gallup-clean}
+# First liberate the data from the slow SPSS file and save to disk
+gwp_path <- "data-raw/Gallup/gwp-processed.rds"
+if (!file.exists(gwp_path)) {
+  gwp <- read_spss(
+    "data-raw/Gallup/The_Gallup_101521.sav",
+    col_select = c(
+      YEAR_CALENDAR,
+      COUNTRYNEW,
+      WPID, WP1220, WP1219,
+      WP16,
+      WP60, WP61, WP63, WP65, WP67,
+      WP68, WP69, WP70, WP71, WP74
+    )
+  )
+
+  # Get rid of SPSS attributes
+  gwp <- gwp %>%
+    zap_labels() %>%
+    zap_label() %>%
+    zap_widths() %>%
+    zap_formats()
+
+  # Save into a good format
+  write_rds(gwp, gwp_path)
+} else {
+  gwp <- read_rds(gwp_path)
+}
+
+gwp <- gwp %>%
+  clean_names() %>%
+  transmute(
+    country = countrynew,
+    year = year_calendar,
+    id = wpid,
+    sex = factor(wp1219, levels = c(2, 1), labels = c("Female", "Male")),
+    age = wp1220,
+    # Don't know, refused, and missing values
+    Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
+    across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
+    # Also reverse the weird 1: yes 2: no coding here
+    across(wp60:wp74, ~ 3 - .)
+  )
+
+# Scale scores note rescaling
+gwp <- gwp %>%
+  mutate(
+    Life_satisfaction = Life_satisfaction / 10,
+    Negative_experiences =
+      rowMeans(select(., wp68:wp74), na.rm = TRUE) - 1,
+    Positive_experiences =
+      rowMeans(select(., wp60:wp67), na.rm = TRUE) - 1
+  ) %>%
+  select(-c(wp60:wp74))
+
+# Categorize ages
+gwp <- gwp %>%
+  mutate(
+    age = cut(
+      age,
+      breaks = seq(15, 105, by = 5),
+      include.lowest = TRUE,
+      right = FALSE,
+      labels = paste(seq(15, 100, by = 5), "to", seq(19, 104, by = 5))
+    ) %>% as.character()
+  )
+
+# There is one 13 year old which resulted in a NA and we drop it
+gwp <- drop_na(gwp, age)
+
+# Focus on young people
+gwp <- gwp %>%
+  filter(age %in% c("15 to 19", "20 to 24"))
+```
+
+Instead of working with the person-level scale scores, we aggregate the data to means and standard errors for each cell as defined by the predictors (country, year, age, sex). Because we treat outcomes as normal this greatly simplifies and speeds up the computations without affecting the results, and also makes the data format concordant with the GBD data.
+
+```{r gallup-summarise}
+gwp <- gwp %>%
+  pivot_longer(
+    c(
+      Life_satisfaction,
+      Negative_experiences,
+      Positive_experiences
+    ),
+    names_to = "outcome", values_to = "val"
+  ) %>%
+  group_by(country, year, sex, age, outcome) %>%
+  summarise(
+    se = sd(val, na.rm = TRUE) / sqrt(n()),
+    val = mean(val, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+We have three data sets with information on countries. Unfortunately, they can all use idiosyncratic naming conventions for the countries, and we therefore harmonise the names in each dataset to the same standard values. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. We do that here for the GWP data, and check that all countries receive a unique name.
+
+```{r gwp-harmonise-countries}
+#| results: hold
+#| label: tbl-gwp-countries
+#| tbl-cap: "Countries whose original GWP name is different to the harmonised one, or whose harmonised name is missing and therefore the original name is retained."
+
+# Check what names were changed and if any don't have harmonised counterpart
+gwp %>%
+  distinct(country) %>%
+  arrange(country) %>%
+  mutate(
+    country_harmonised = countryname(country, destination = "cldr.short.en")
+  ) %>%
+  filter(country != country_harmonised | is.na(country_harmonised)) %>%
+  kbl(caption = "GWP country names") %>%
+  kable_custom()
+
+# We can see that this would result in North Cyprus being lumped with Cyprus so we need to replace the name before harmonising
+
+# Harmonise old names and replace only if harmonised name found
+gwp <- gwp %>%
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) %>%
+  # This picks the harmonised name if exists, otherwise original name
+  # Prevent north cyprus from becoming cyprus
+  mutate(
+    country_harmonised = ifelse(
+      country == "Northern Cyprus",
+      "Northern Cyprus",
+      country_harmonised
+    )
+  ) %>%
+  mutate(country = coalesce(country_harmonised, country)) %>%
+  select(-country_harmonised)
+```
+
+We then load the synthetic GWP dataset if the real data was not found. This is just a list of the countries, years and demographics in the actual data, with gaussian noise for the outcomes' mean and SE values.
+
+```{r}
+# Create if doesn't exist
+gwp_mock_path <- "data-raw/gwp-MOCK.rds"
+if (!file.exists(gwp_mock_path)) {
+  distinct(gwp, outcome, country, year, sex, age) %>% 
+    mutate(
+      se = rnorm(
+        nrow(.), 
+        mean(gwp$se, na.rm = TRUE), 
+        sd(gwp$se, na.rm = TRUE)
+      ),
+      val = rnorm(
+        nrow(.), 
+        mean(gwp$val, na.rm = TRUE), 
+        sd(gwp$val, na.rm = TRUE)
+      )
+    ) %>% 
+    write_rds(gwp_mock_path, compress = "xz")
+}
+# Load if actual data doesn't exist
+if (!dir.exists("data-raw/Gallup")) {
+  cat("Using synthetic GWP data.")
+  gwp <- read_rds(gwp_mock_path)
+} else {
+  cat("Using actual GWP data.")
+}
+```
+
+## Global Burden of Disease
+
+The Global Burden of Disease dataset consists of mental health indicators across \~200 countries from 2000 to 2019.
+
+We downloaded the Global Burden of Disease data from <http://ghdx.healthdata.org/gbd-results-tool> on 2021-11-02 to `data-raw/GBD/`. We include those files in our repository as [permitted by the license](http://ghdx.healthdata.org/). They are inside downloaded `.zip` files, of which there may be more than one (depending on the download size). Here, we load those tables to R.
+
+```{r gbd-data-load}
+# Load data files and merge to one table
+gbd <- list.files(
+  "data-raw/GBD/",
+  pattern = ".zip", full.names = TRUE, recursive = TRUE
+) %>%
+  read_csv()
+```
+
+We then clean the GBD data and
+
+-   Clean the variable names
+-   Remove the metric and measure variables; we focus on prevalence rate
+    -   prevalence: Total number of cases
+    -   rate: Total cases per 100,000 population
+-   Convert outcome rates to proportions (0 - 1)
+-   Clean cause names and rename to outcome to harmonise with GWP
+-   Convert GBD estimated rate CI limits to an approximate standard error
+-   Subset data to young people (10 - 24)
+
+```{r gbd-data-clean}
+# First step is to clean names
+gbd <- clean_names(gbd)
+
+# Confirm that correct measures were downloaded:
+# distinct(gbd, measure, metric)
+gbd <- select(gbd, -metric, -measure)
+gbd <- gbd %>%
+  mutate(across(c(val, upper, lower), ~ .x / 100000))
+
+# Clean cause names
+# distinct(gbd, cause)
+gbd <- gbd %>%
+  mutate(
+    cause = case_when(
+      cause == "Anxiety disorders" ~ "Anxiety",
+      cause == "Depressive disorders" ~ "Depression",
+      cause == "Self-harm" ~ "Selfharm"
+    )
+  )
+
+# Harmonise variable names with other datasets
+gbd <- gbd %>%
+  rename(country = location, outcome = cause)
+
+# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions). We convert those to normal approximate standard errors.
+gbd <- gbd %>%
+  mutate(se = (upper - lower) / (1.96 * 2)) %>%
+  select(-c(upper, lower))
+
+# Focus on young people
+gbd <- gbd %>%
+  filter(age %in% c("10 to 14", "15 to 19", "20 to 24"))
+```
+
+Then we need to harmonise to country names (always somewhat idiosyncratic) to a common metric. There is a harmonised name for each GBD country, and 27 country names are harmonised.
+
+```{r gbd-harmonise-countries}
+#| results: hold
+#| label: tbl-gbd-countries
+#| tbl-cap: "Countries whose original GBD name is different to the harmonised one, or whose harmonised name is missing"
+#| layout-ncol: 1
+
+# Check what names were changed and if any don't have harmonised counterpart
+gbd %>%
+  distinct(country) %>%
+  arrange(country) %>%
+  mutate(
+    country_harmonised = countryname(country, destination = "cldr.short.en")
+  ) %>%
+  filter(country != country_harmonised | is.na(country_harmonised)) %>%
+  kbl(caption = "GBD country names") %>%
+  kable_custom()
+# Harmonise old names and replace only if harmonised name found
+gbd <- gbd %>%
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) %>%
+  # This picks the harmonised name if exists, otherwise original name
+  mutate(country = coalesce(country_harmonised, country)) %>%
+  select(-country_harmonised)
+```
+
+## International Telecommunication Union
+
+After processing the outcome tables above, we move on to the internet adoption metrics from the ITU. The International Telecommunications Union dataset has internet adoption metrics across \~200 countries from 2000 to 2020. 
+
+We downloaded the data files from the ITU website. New versions may be posted subsequent to this, in which case the URLs could be changed here to update the analyses with latest data.
+
+After downloading, we cleaned the ITU data to a shape concordant with the outcome data, and converted the values to proportions (0 - 1). Then we harmonised the country names as above, and dropped countries that don't exist in outcomes.
+
+```{r itu-process}
+#| results: hold
+#| label: tbl-itu-0
+#| tbl-cap: "Countries whose original ITU name is different to the harmonised one, or whose harmonised name is missing"
+#| layout-ncol: 1
+
+# Download data sets from the ITU website if not yet downloaded
+if (!file.exists("data-raw/ITU/PercentIndividualsUsingInternet.xlsx")) {
+  dir.create("data-raw/ITU")
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/PercentIndividualsUsingInternet_Nov2021.xlsx",
+    "data-raw/ITU/PercentIndividualsUsingInternet.xlsx"
+  )
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx",
+    "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx"
+  )
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx",
+    "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx"
+  )
+}
+
+# Read and reshape fixed broadband data
+itu_fixed <- read_xlsx(
+  "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx",
+  sheet = 2,
+  col_types = "text"
+) %>%
+  pivot_longer(-c(Indicator, Country)) %>%
+  separate(name, into = c("year", "variable")) %>%
+  pivot_wider(names_from = variable) %>%
+  mutate(fixed = as.numeric(value)) %>%
+  select(country = Country, year, fixed)
+
+# Read and reshape mobile broadband data
+itu_mobile <- read_xlsx(
+  "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx",
+  sheet = 2,
+  col_types = "text"
+) %>%
+  pivot_longer(-c(Indicator, Country)) %>%
+  separate(name, into = c("year", "variable")) %>%
+  pivot_wider(names_from = variable) %>%
+  mutate(mobile = as.numeric(value)) %>%
+  select(country = Country, year, mobile)
+
+# Percent using internet
+itu_percent <- read_xlsx(
+  "data-raw/ITU/PercentIndividualsUsingInternet.xlsx",
+  col_types = "text"
+) %>%
+  pivot_longer(-c(Indicator, Country)) %>%
+  separate(name, into = c("year", "variable")) %>%
+  pivot_wider(names_from = variable) %>%
+  mutate(internet = as.numeric(value)) %>%
+  select(country = Country, year, internet)
+
+# Merge to one table in wide format (oldest on left to include all years)
+itu <- reduce(list(itu_percent, itu_fixed, itu_mobile), left_join)
+
+# values (1-100) to proportions (0-1) and years to numbers
+itu <- itu %>%
+  mutate(across(c(internet, fixed, mobile), function(x) x / 100)) %>%
+  mutate(year = as.numeric(year))
+
+# Drop tables
+rm(itu_fixed, itu_mobile, itu_percent)
+
+# Harmonise countries
+# Check what names were changed and if any don't have harmonised counterpart
+itu %>%
+  distinct(country) %>%
+  arrange(country) %>%
+  mutate(
+    country_harmonised = countryname(country, destination = "cldr.short.en")
+  ) %>%
+  filter(country != country_harmonised | is.na(country_harmonised)) %>%
+  kbl(caption = "ITU country names") %>%
+  kable_custom()
+
+# Harmonise old names and replace only if harmonised name found
+itu <- itu %>%
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) %>%
+  # This picks the harmonised name if exists, otherwise original name
+  mutate(country = coalesce(country_harmonised, country)) %>%
+  select(-country_harmonised)
+
+# Drop countries that don't exist in outcomes
+itu <- itu %>%
+  filter(
+    country %in% unique(gbd$country) | country %in% unique(gwp$country)
+  )
+
+# Drop countries that don't have any actual internet data
+itu_zeros <- itu %>%
+  group_by(country) %>%
+  summarise(s = sum(internet, na.rm = TRUE)) %>%
+  filter(s == 0)
+
+itu <- itu %>%
+  filter(!(country %in% itu_zeros$country))
+rm(itu_zeros)
+```
+
+### Missingness
+
+We then impute missing intermediate values to the internet adoption timeseries. We use linear interpolation to fill missing intermediate values, but do not extrapolate before or after the first and last values of each country.
+
+```{r itu-impute}
+#| results: hold
+#| label: tbl-itu-impute
+#| tbl-cap: "Summary of ITU data imputation"
+
+# Reshape to easily impute all variables
+itu_long <- itu %>%
+  pivot_longer(c(internet, fixed, mobile))
+
+# Impute by country and variable
+itu_long <- itu_long %>%
+  group_by(country, name) %>%
+  # Find first and last year with this variable in each country
+  # so as to prevent extrapolation
+  mutate(
+    min_year = year[min(which(!is.na(value)))],
+    max_year = year[max(which(!is.na(value)))]
+  ) %>%
+  # Interpolate values linearly
+  # use possibly() to avoid errors for countries with no data
+  mutate(
+    across(
+      value,
+      .fns = list(
+        i = possibly(
+          function(x) na_interpolation(x, maxgap = Inf),
+          otherwise = NaN
+        )
+      )
+    )
+  ) %>%
+  # Take out projected (non-intermediate) imputed values
+  mutate(
+    value_i = if_else(
+      between(year, unique(min_year), unique(max_year)),
+      value_i,
+      NaN
+    )
+  ) %>%
+  ungroup() %>%
+  select(-min_year, -max_year)
+
+# Summary
+itu_long %>%
+  group_by(name) %>%
+  mutate(min_year = if_else(name == "mobile", 2007, 2000)) %>%
+  summarise(
+    n_miss_orig = sum(is.na(value) & year >= min_year),
+    p_miss_orig = percent(n_miss_orig / sum(year >= min_year), .1),
+    n_miss_imp = sum(is.na(value_i) & year >= min_year),
+    p_miss_imp = percent(n_miss_imp / sum(year >= min_year), .1),
+    imputed = n_miss_orig - n_miss_imp
+  ) %>%
+  kbl(caption = "ITU data imputation summary") %>%
+  kable_custom()
+
+
+# We then replace the original values with the imputed ones
+itu <- itu_long %>%
+  # Pick non-missing value, from original and imputed
+  mutate(value = coalesce(value, value_i)) %>%
+  select(-value_i) %>%
+  pivot_wider()
+rm(itu_long)
+```
+
+## GLOBE regions
+
+We group the countries into GLOBE regions in order to have a higher level of grouping at which the analyses can be summarised. This allows us to eg. present figures and tables per region, instead of overwhelmingly by country, and also provides an upper level for the multilevel models. We use the extended GLOBE regions following Jebb et al. (2020), and had to manually add labels to some countries that were not grouped in those studies.
+
+```{r globe-regions}
+#| results: hold
+#| label: tbl-globe
+#| tbl-cap: "Countries with manually filled region"
+
+regions <- read_csv(
+  "data-raw/Regions/GLOBE-regions-from-Jebb-et-al-2020.csv"
+) %>%
+  # Jebb et al used * to indicate deviance from GLOBE, remove
+  mutate(country = str_remove_all(country, "\\*")) %>%
+  # Standardize country names
+  # This drops Nagorno-Karabakh Republic
+  mutate(country = countryname(country)) %>%
+  drop_na(country)
+
+# This also combined Swaziland and (Eswatini) to Eswatini, and Northern- and Cyprus. Therefore we just take the distinct country & region.
+regions <- distinct(regions, region, country)
+
+# Countries in GBD not present in region data
+no_region_gbd <- filter(
+  distinct(gbd, country),
+  !(country %in% unique(regions$country))
+) %>%
+  arrange(country)
+
+# Then see what countries in GWP are without region
+no_region_gwp <- filter(
+  distinct(gwp, country),
+  !(country %in% unique(regions$country))
+) %>%
+  arrange(country)
+
+bind_rows(no_region_gbd, no_region_gwp) %>%
+  arrange(country) %>%
+  distinct() %>%
+  write_csv("data-raw/Regions/countries-without-region.csv")
+
+# I then filled missing regions in Jebb et al and extended GLOBE referenced therein
+
+# Load our manually filled region data
+regions_filled <- read_csv(
+  "data-raw/Regions/countries-without-region-filled.csv"
+)
+
+# Combine Jebb et al GLOBE regions and our manually added ones
+regions <- regions %>%
+  bind_rows(
+    regions_filled %>%
+      mutate(Note = "Filled")
+  ) %>%
+  arrange(region, country)
+
+# Shorter name for plots
+regions <- regions %>%
+  mutate(region = if_else(region == "Sub-Sahara Africa", "Africa", region))
+
+# Display table of regions and countries
+regions %>%
+  drop_na(Note) %>%
+  select(-Note) %>%
+  arrange(region, country) %>%
+  kbl(caption = "Countries with a manually filled region") %>%
+  kable_custom()
+
+# Clean region labels
+regions$region <- str_replace_all(regions$region, " ", "_")
+regions$region <- factor(regions$region)
+
+# Remove unnecessary items
+regions <- select(regions, -Note)
+
+# Add regions to data tables
+itu <- left_join(itu, regions)
+gbd <- left_join(gbd, regions)
+gwp <- left_join(gwp, regions)
+# Remove now unnecessary variables
+rm(no_region_gbd, no_region_gwp, regions_filled, regions)
+```
+
+## ITU summary table
+
+```{r itu-summary-table}
+#| column: page-right
+#| tbl-cap: "Mean internet user percentages across regions and time."
+#| label: tbl-itusummary
+
+itu %>%
+  select(region, country, year, internet) %>%
+  mutate(internet = internet * 100) %>%
+  mutate(region = str_replace(region, "_", " ")) %>%
+  pivot_wider(names_from = year, values_from = internet) %>%
+  select(-country) %>%
+  tbl_summary(
+    by = region,
+    missing = "no",
+    statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
+  ) %>%
+  add_overall(col_label = "Total") %>%
+  as_kable_extra(caption = "ITU summary") %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_custom()
+```
+
+## Write data tables
+
+We have organised our code into separate files, and so save the processed data here for use in the other analysis scripts.
+
+```{r}
+write_rds(itu, "data/itu.rds")
+write_rds(gwp, "data/gwp.rds")
+write_rds(gbd, "data/gbd.rds")
+```
+
