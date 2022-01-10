@@ -199,6 +199,7 @@ We then load the synthetic GWP dataset if the real data was not found. This is j
 # Create if doesn't exist
 gwp_mock_path <- "data-raw/gwp-MOCK.rds"
 if (!file.exists(gwp_mock_path)) {
+  set.seed(101010)
   distinct(gwp, outcome, country, year, sex, age) %>% 
     mutate(
       se = rnorm(
