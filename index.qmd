@@ -1,8 +1,6 @@
 # Preface {.unnumbered}
 
-Welcome! This document is the online analysis supplement to *A global study of the association between internet adoption and adolescent mental health and well-being* (Vuorre & Przybylski, [Preprint]() in preparation). It contains all the analyses reported in the manuscript along with supplemental analyses. The data and source code repository, along with the datasets, are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [OSF](https://osf.io/ys7m9/).
-
-
+Welcome! This document is the online analysis supplement to *A global study of the association between internet adoption and adolescent mental health and well-being* (Vuorre & Przybylski, [preprint]() in preparation). It contains all the analyses reported in the manuscript along with supplemental analyses. The data and source code are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [OSF](https://osf.io/ys7m9/).
 
 ::: {.callout-note}
 ### How to reproduce our results

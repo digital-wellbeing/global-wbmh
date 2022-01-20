@@ -2,6 +2,8 @@
 
 ```{r setup}
 #| cache: false
+#| results: hide
+#| message: false
 # Packages
 library(readxl)
 library(imputeTS)
@@ -40,7 +42,8 @@ read_spss(
     WPID, WP1219,
     WP16,
     WP60, WP61, WP63, WP65, WP67,
-    WP68, WP69, WP70, WP71, WP74
+    WP68, WP69, WP70, WP71, WP74,
+    WP16056
   )
 ) %>%
   generate_dictionary()
@@ -69,7 +72,8 @@ if (!file.exists(gwp_path)) {
       WPID, WP1220, WP1219,
       WP16,
       WP60, WP61, WP63, WP65, WP67,
-      WP68, WP69, WP70, WP71, WP74
+      WP68, WP69, WP70, WP71, WP74,
+      WP16056
     )
   )
 
@@ -98,7 +102,9 @@ gwp <- gwp %>%
     Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
     across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
     # Also reverse the weird 1: yes 2: no coding here
-    across(wp60:wp74, ~ 3 - .)
+    across(wp60:wp74, ~ 3 - .),
+    # Internet (fix NAs and reverse 1:yes 2:no coding to 1:no 2:yes)
+    gwpi = 2 - if_else(between(wp16056, 1, 2), wp16056, NaN)
   )
 
 # Scale scores note rescaling
@@ -136,6 +142,9 @@ Instead of working with the person-level scale scores, we aggregate the data to 
 
 ```{r gallup-summarise}
 gwp <- gwp %>%
+  # Aggregate internet
+  group_by(country, year, sex, age) %>% 
+  mutate(gwpi = mean(gwpi, na.rm = TRUE)) %>% 
   pivot_longer(
     c(
       Life_satisfaction,
@@ -144,7 +153,7 @@ gwp <- gwp %>%
     ),
     names_to = "outcome", values_to = "val"
   ) %>%
-  group_by(country, year, sex, age, outcome) %>%
+  group_by(country, year, sex, age, outcome, gwpi) %>%
   summarise(
     se = sd(val, na.rm = TRUE) / sqrt(n()),
     val = mean(val, na.rm = TRUE)
@@ -155,7 +164,6 @@ gwp <- gwp %>%
 We have three data sets with information on countries. Unfortunately, they can all use idiosyncratic naming conventions for the countries, and we therefore harmonise the names in each dataset to the same standard values. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. We do that here for the GWP data, and check that all countries receive a unique name.
 
 ```{r gwp-harmonise-countries}
-#| results: hold
 #| label: tbl-gwp-countries
 #| tbl-cap: "Countries whose original GWP name is different to the harmonised one, or whose harmonised name is missing and therefore the original name is retained."
 
@@ -200,7 +208,7 @@ We then load the synthetic GWP dataset if the real data was not found. This is j
 gwp_mock_path <- "data-raw/gwp-MOCK.rds"
 if (!file.exists(gwp_mock_path)) {
   set.seed(101010)
-  distinct(gwp, outcome, country, year, sex, age) %>% 
+  distinct(gwp, outcome, country, year, sex, age, gwpi) %>% 
     mutate(
       se = rnorm(
         nrow(.), 
@@ -288,10 +296,8 @@ gbd <- gbd %>%
 Then we need to harmonise to country names (always somewhat idiosyncratic) to a common metric. There is a harmonised name for each GBD country, and 27 country names are harmonised.
 
 ```{r gbd-harmonise-countries}
-#| results: hold
 #| label: tbl-gbd-countries
 #| tbl-cap: "Countries whose original GBD name is different to the harmonised one, or whose harmonised name is missing"
-#| layout-ncol: 1
 
 # Check what names were changed and if any don't have harmonised counterpart
 gbd %>%
@@ -328,7 +334,6 @@ After downloading, we cleaned the ITU data to a shape concordant with the outcom
 #| results: hold
 #| label: tbl-itu-0
 #| tbl-cap: "Countries whose original ITU name is different to the harmonised one, or whose harmonised name is missing"
-#| layout-ncol: 1
 
 # Download data sets from the ITU website if not yet downloaded
 if (!file.exists("data-raw/ITU/PercentIndividualsUsingInternet.xlsx")) {
@@ -596,6 +601,30 @@ rm(no_region_gbd, no_region_gwp, regions_filled, regions)
 
 itu %>%
   select(region, country, year, internet) %>%
+  mutate(internet = internet * 100) %>%
+  mutate(region = str_replace(region, "_", " ")) %>%
+  pivot_wider(names_from = year, values_from = internet) %>%
+  select(-country) %>%
+  tbl_summary(
+    by = region,
+    missing = "no",
+    statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
+  ) %>%
+  add_overall(col_label = "Total") %>%
+  as_kable_extra(caption = "ITU summary") %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_custom()
+```
+
+## GWP summary table
+
+```{r gwp-summary-table}
+#| column: page-right
+#| tbl-cap: "Mean internet user percentages across regions and time from the GWP data."
+#| label: tbl-gwpsummary
+
+gwp %>%
+  select(region, country, year, gwpi) %>%
   mutate(internet = internet * 100) %>%
   mutate(region = str_replace(region, "_", " ")) %>%
   pivot_wider(names_from = year, values_from = internet) %>%

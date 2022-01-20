@@ -76,7 +76,7 @@ We then display the average ($\beta^y_1$), region- ($\delta^y_1$), and country-l
 #| column: screen-inset-right
 #| fig-width: 13
 #| fig-height: 8
-#| fig-cap: "Forest plot of linear trends in outcomes"
+#| fig-cap: "Forest plot of linear trends in outcomes. Shaded areas indicate approximate posterior densities of average and region-specific trends. Blue points are country-specific posterior means. Black points and lines are 95%CIs; open points indicate estimates where zero is within the 95% most credible values."
 #| label: fig-forest-trends
 p_draws %>%
   mutate(is_average = region == "Average") %>%

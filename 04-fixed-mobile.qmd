@@ -92,6 +92,32 @@ itu %>%
   )
 ```
 
+Correspondence between different internet metrics. Note that 
+
+- ITU internet metrics are for everyone (all ages, genders, etc)
+- GWP metrics are per demographic, aggregated to the country-year mean here (for 15 to 24 year olds!)
+
+This helps to explain why, across the board, the ITU internet metric (`internet`, below) is lower than the GWP internet metric (`gwpi`) as younger people tend to have access to the internet more often (see e.g. [this ITU spreadsheet](https://www.itu.int/en/ITU-D/Statistics/Documents/facts/ITU_regional_global_Key_ICT_indicator_aggregates_Oct_2021.xlsx) showing that the percentage of individuals using the internet is ~15% greater for youth (15-24) than the rest of the population.)
+
+```{r}
+#| column: screen-inset-right
+#| fig-width: 13
+#| fig-height: 8
+#| fig-cap: "GWP and ITU internet metrics for all countries."
+#| label: fig-internet-metrics
+gwp %>% 
+  group_by(region, country, year) %>% 
+  summarise(gwpi = mean(gwpi, na.rm = TRUE)) %>% 
+  left_join(select(itu, country, year, internet)) %>% 
+  filter(year >= 2015) %>% 
+  pivot_longer(gwpi:internet) %>% 
+  ggplot(aes(year, value, color = name)) +
+  scale_color_brewer("Metric", palette = "Set1") +
+  geom_line() +
+  facet_wrap("country")
+```
+
+
 ## Fixed broadband
 
 ### Forest plot

@@ -14,6 +14,7 @@ theme_set(
 
 library(knitr)
 opts_chunk$set(
-  cache = TRUE,
   cache.lazy = FALSE
 )
+
+source("R/functions.R")

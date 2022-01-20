@@ -82,6 +82,7 @@ itu <- itu %>%
     m1_cw = m1 - m1_cb,
   ) %>%
   # Grand-mean center the country averages
+  ungroup() %>% 
   mutate(
     across(c(i1_cb, f1_cb, m1_cb), ~ . - mean(., na.rm = T))
   )
@@ -139,6 +140,39 @@ dat %>%
   kable(digits = 7) %>% 
   kable_custom()
 ```
+
+We then create the lagged and centered GWP internet predictor. Note that this is at the level of demographics, not just a country average like in ITU.
+
+```{r}
+# Take only relevant variables to make this easier
+gwpi <- dat %>% 
+  filter(outcome == "Life_satisfaction") %>% 
+  filter(year >= .5) %>% 
+  select(region, country, year, sex, age, year, gwpi)
+
+# Create lagged GWP internet
+gwpi <- gwpi %>% 
+  arrange(region, country, sex, age, year) %>% 
+  group_by(region, country, sex, age) %>% 
+  mutate(g1 = lag(gwpi, 1))
+
+# Center GWP internet
+gwpi <- gwpi %>%
+  group_by(country) %>%
+  mutate(
+    g1_cb = mean(g1, na.rm = TRUE), # Country average
+    g1_cw = g1 - g1_cb, # Year-specific deviation from country average
+  ) %>%
+  # Grand-mean center the country averages
+  ungroup() %>% 
+  mutate(
+    g1_cb = g1_cb - mean(g1_cb, na.rm = TRUE)
+  )
+
+# Join to data (all outcomes)
+dat <- left_join(dat, select(gwpi, -gwpi))
+```
+
 
 ### Specification
 
@@ -502,6 +536,15 @@ bf_2_m <- bf(
   unused = ~outcome
 )
 
+bf_2_g <- bf(
+  val | resp_se(se, sigma = TRUE) ~
+  year * sex + year * age + g1_cw * sex + g1_cw * age + g1_cb +
+    (year * sex + year * age + g1_cw * sex + g1_cw * age | country) +
+    (year * sex + year * age + g1_cw * sex + g1_cw * age | region),
+  family = gaussian(),
+  unused = ~outcome
+)
+
 fits %>%
   mutate(
     fit2_f = map2(
@@ -545,4 +588,32 @@ fits %>%
       )
     )
   )
+
+fits %>%
+  mutate(
+    fit2_g = map2(
+      data, outcome,
+      ~brm(
+        formula = bf_2_g,
+        data = .x,
+        chains = hmc$chains,
+        cores = hmc$cores,
+        threads = hmc$threads,
+        iter = hmc$iter,
+        warmup = hmc$warmup,
+        refresh = hmc$refresh,
+        control = list(
+          adapt_delta = hmc$adapt_delta,
+          max_treedepth = hmc$max_treedepth
+        ),
+        file = str_glue("models/brm-{.y}-2-gwpinternet")
+      )
+    )
+  )
 ```
+
+
+```{r}
+fits$data[[1]] %>% select(country, year, g1_cb) %>% drop_na(g1_cb)
+```
+
