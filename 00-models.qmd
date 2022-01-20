@@ -243,9 +243,9 @@ Here, we specify the outcome model. Note the `|c|` and `|r|` that link the count
 # Meta-regression model of outcomes
 bf_1 <- bf(
   val | resp_se(se, sigma = TRUE) ~
-  year * sex + year * age +
-    (year * sex + year * age | c | country) +
-    (year * sex + year * age | r | region),
+  year * sex * age +
+    (year * sex * age | c | country) +
+    (year * sex * age | r | region),
   family = gaussian()
 )
 ```
@@ -480,9 +480,9 @@ Where $\text{Internet}^{\text{t-1}}_i$ is the within-country centered 1-year-lag
 # Model formula is only a small update to Model 1
 bf_2 <- bf(
   val | resp_se(se, sigma = TRUE) ~
-  year * sex + year * age + i1_cw * sex + i1_cw * age + i1_cb +
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | country) +
-    (year * sex + year * age + i1_cw * sex + i1_cw * age | region),
+  year * sex * age + i1_cw * sex * age + i1_cb +
+    (year * sex * age + i1_cw * sex * age | country) +
+    (year * sex * age + i1_cw * sex * age | region),
   family = gaussian()
 )
 
@@ -520,27 +520,27 @@ Here we further fit model 2 using the different internet predictors
 #| results: hide
 bf_2_f <- bf(
   val | resp_se(se, sigma = TRUE) ~
-  year * sex + year * age + f1_cw * sex + f1_cw * age + f1_cb +
-    (year * sex + year * age + f1_cw * sex + f1_cw * age | country) +
-    (year * sex + year * age + f1_cw * sex + f1_cw * age | region),
+  year * sex * age + i1_cw * sex * age + f1_cb +
+    (year * sex * age + i1_cw * sex * age | country) +
+    (year * sex * age + i1_cw * sex * age | region),
   family = gaussian(),
   unused = ~outcome
 )
 
 bf_2_m <- bf(
   val | resp_se(se, sigma = TRUE) ~
-  year * sex + year * age + m1_cw * sex + m1_cw * age + m1_cb +
-    (year * sex + year * age + m1_cw * sex + m1_cw * age | country) +
-    (year * sex + year * age + m1_cw * sex + m1_cw * age | region),
+  year * sex * age + i1_cw * sex * age + m1_cb +
+    (year * sex * age + i1_cw * sex * age | country) +
+    (year * sex * age + i1_cw * sex * age | region),
   family = gaussian(),
   unused = ~outcome
 )
 
 bf_2_g <- bf(
   val | resp_se(se, sigma = TRUE) ~
-  year * sex + year * age + g1_cw * sex + g1_cw * age + g1_cb +
-    (year * sex + year * age + g1_cw * sex + g1_cw * age | country) +
-    (year * sex + year * age + g1_cw * sex + g1_cw * age | region),
+  year * sex * age + i1_cw * sex * age + g1_cb +
+    (year * sex * age + i1_cw * sex * age | country) +
+    (year * sex * age + i1_cw * sex * age | region),
   family = gaussian(),
   unused = ~outcome
 )
