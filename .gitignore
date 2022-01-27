@@ -13,6 +13,7 @@ output/
 docs/
 models/
 data/
+**/*.docx
 
 /.quarto/
 *_cache/
