@@ -9,8 +9,8 @@ library(lubridate)
 library(kableExtra)
 library(ggstance)
 library(mgcv)
-library(brms)
 library(cmdstanr)
+library(officer)
 library(ellipse)
 library(ggh4x)
 library(tidybayes)
@@ -19,6 +19,7 @@ library(posterior)
 library(parameters)
 library(emmeans)
 library(broom)
+library(brms)
 library(tidyverse)
 ```
 
@@ -163,7 +164,67 @@ In sum these results were somewhat mixed, where some regions showing both increa
 
 Then to help illustrate the parameters, we draw figures of the fitted lines conditional on the predictors, or so called counterfactual plots.
 
-```{r fitted-trend-country}
+::: {.panel-tabset .column-screen-inset-right}
+#### All outcomes
+
+```{r trends-regions}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Trends in all variables across regions"
+#| label: fig-trends-regions
+
+# Stack data sets
+# Assume all outcomes are proportions (0-1)
+dat_all <- bind_rows(
+  gwp,
+  gbd,
+  itu %>% mutate(outcome = "Internet", val = internet)
+) %>%
+  mutate(outcome = fct_inorder(str_replace(outcome, "_", "_"))) %>%
+  group_by(region, country, year, outcome) %>%
+  summarise(mean = mean(val, na.rm = TRUE)) %>%
+  ungroup()
+
+# Draw small multiples figure, outcomes x regions
+dat_all %>% 
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(year, mean)) +
+  scale_y_continuous(
+    "Value",
+    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
+    breaks = pretty_breaks()
+  ) +
+  scale_x_date(
+    "Year",
+    date_breaks = "5 years",
+    date_labels = "'%y",
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country, outcome)),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  stat_summary(
+    fun = mean, geom = "line",
+    size = .6, color = "dodgerblue4"
+  ) +
+  facet_grid(
+    outcome ~ region,
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "none",
+    panel.spacing = unit(3, "pt"),
+    axis.title.y = element_blank()
+  )
+```
+
+#### Life satisfaction
+
+```{r trends-ls}
 f_country <- fits %>%
   mutate(fc = map(fit1, fitted_country)) %>%
   select(outcome, fc)
@@ -231,69 +292,6 @@ f_country <- f_country %>%
       ~ plot_country(.x, .y)
     )
   )
-```
-
-::: {.panel-tabset .column-screen-inset-right}
-#### All outcomes
-
-```{r trends-regions}
-#| echo: false
-#| fig-width: 12
-#| fig-height: 8
-#| fig-cap: "Trends in all variables across regions"
-#| label: fig-trends-regions
-
-# Stack data sets
-# Assume all outcomes are proportions (0-1)
-dat_all <- bind_rows(
-  gwp,
-  gbd,
-  itu %>% mutate(outcome = "Internet", val = internet)
-) %>%
-  mutate(outcome = fct_inorder(str_replace(outcome, "_", "_"))) %>%
-  group_by(region, country, year, outcome) %>%
-  summarise(mean = mean(val, na.rm = TRUE)) %>%
-  ungroup()
-
-# Draw small multiples figure, outcomes x regions
-dat_all %>% 
-  mutate(year = make_date(year)) %>%
-  ggplot(aes(year, mean)) +
-  scale_y_continuous(
-    "Value",
-    labels = function(x) percent(x, .01) %>% str_remove("\\.00"),
-    breaks = pretty_breaks()
-  ) +
-  scale_x_date(
-    "Year",
-    date_breaks = "5 years",
-    date_labels = "'%y",
-    expand = expansion(.02)
-  ) +
-  geom_line(
-    aes(group = interaction(country, outcome)),
-    alpha = .25, size = .4, color = "dodgerblue1"
-  ) +
-  stat_summary(
-    fun = mean, geom = "line",
-    size = .6, color = "dodgerblue4"
-  ) +
-  facet_grid(
-    outcome ~ region,
-    scales = "free_y",
-    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
-  ) +
-  theme(
-    aspect.ratio = 1,
-    legend.position = "none",
-    panel.spacing = unit(3, "pt"),
-    axis.title.y = element_blank()
-  )
-```
-
-#### Life satisfaction
-
-```{r trends-ls}
 #| echo: false
 #| fig-width: 12
 #| fig-height: 10
@@ -471,6 +469,25 @@ left_join(
     labeller = as_labeller(~ str_replace(., "_", " "))
   ) +
   theme(aspect.ratio = 1)
+```
+
+```{r}
+# Display table and print in word document
+cor_tab <- cor_pars %>% 
+  transmute(
+    outcome = str_replace(outcome, "_", " "), 
+    correlation = str_glue("{mean} [{q2.5}, {q97.5}]")
+  )
+cor_tab %>%   
+  kbl(caption = "Between-country trend correlation parameters") %>% 
+  kable_custom()
+
+read_docx() %>% 
+  body_add_table(
+    cor_tab,
+    first_column = TRUE
+  ) %>% 
+  print("Table-correlations.docx")
 ```
 
 ### Other results from Model 1
