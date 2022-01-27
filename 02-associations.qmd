@@ -38,10 +38,6 @@ oo <- c(
 fits <- tibble(outcome = oo) %>% 
   mutate(outcome = factor(outcome, levels = oo)) %>% 
   mutate(
-    fit1 = map(
-      outcome, 
-      ~read_rds(str_glue("models/brm-{.x}-1-internet.rds"))
-    ),
     fit2 = map(
       outcome, 
       ~read_rds(str_glue("models/brm-{.x}-2-internet.rds"))
@@ -57,32 +53,54 @@ First, we compared the R2 values between Models 1 and 2. This comparison is not 
 
 ```{r model21-compare}
 #| results: hold
-#| tbl-cap: "Model 1 and 2 proportions variance explained by outcome"
+#| tbl-cap: "Model 1 and 2 proportions variance explained"
 #| label: tbl-m12-r2
 
-fits %>%
-  select(outcome, fit1, fit2) %>% 
-  pivot_longer(c(fit1, fit2)) %>% 
-  mutate(
-    r2 = map(
-      value,
-      ~ bayes_R2(., resp = "val") %>%
-        as.data.frame() %>%
-        mutate(across(everything(), ~ percent(., .1))) %>%
-        transmute(result = str_glue("{Estimate} [{Q2.5}, {Q97.5}]"))
+# Takes a while so save to file
+r2_file_path <- "models/m12r2.rds"
+if (!file.exists(r2_file_path)) {
+  fits <- fits %>% 
+    mutate(
+      fit1 = map(
+        outcome, 
+        ~read_rds(str_glue("models/brm-{.x}-1-internet.rds"))
+      )
     )
-  ) %>%
-  select(-value) %>%
-  unnest(r2) %>% 
-  pivot_wider(
-    names_from = name,
-    values_from = result,
-    names_prefix = "Model "
-  ) %>%
-  mutate(outcome = str_replace(outcome, "_", " ")) %>%
+  
+  r2_tab <- fits %>%
+    select(outcome, fit1, fit2) %>% 
+    pivot_longer(c(fit1, fit2)) %>% 
+    mutate(
+      r2 = map(
+        value,
+        ~ bayes_R2(., resp = "val") %>%
+          as.data.frame() %>%
+          mutate(across(everything(), ~ percent(., .1))) %>%
+          transmute(result = str_glue("{Estimate} [{Q2.5}, {Q97.5}]"))
+      )
+    ) %>%
+    select(-value) %>%
+    unnest(r2) %>% 
+    pivot_wider(
+      names_from = name,
+      values_from = result,
+      names_prefix = "Model "
+    ) %>%
+    mutate(outcome = str_replace(outcome, "_", " "))
+  write_rds(r2_tab, r2_file_path)
+  fits <- select(fits, -fit1)
+} else {r2_tab <- read_rds(r2_file_path)}
+
+r2_tab %>% 
   kbl(caption = "Model 1 and 2 R-squared values") %>%
   kable_custom()
-fits <- select(fits, -fit1)
+
+read_docx() %>% 
+  body_add_table(
+    r2_tab,
+    first_column = TRUE
+  ) %>% 
+  print("Table-R2.docx")
 ```
 
 ## Forest plot
@@ -129,10 +147,14 @@ p_draws %>%
     }
   ) +
   scale_x_continuous(
-    "Conditional effect of 100% increase in internet adoption on outcome",
+    "Conditional lagged effect of 10% increase in internet adoption",
     breaks = pretty_breaks(),
-    labels = function(x) percent(x / 100, .01) %>% str_remove("\\.00"),
-    expand = expansion(c(.1, .1))
+    labels = function(x) percent(x / 1000, .001) %>% 
+      str_remove("\\.000") %>% 
+      # Remove trailing zero (twice)
+      str_remove("(?<=[:digit:])0(?=%)") %>% 
+      str_remove("(?<=[:digit:])0(?=%)"),
+    expand = expansion(c(.15, .15))
   ) +
   stat_halfeye(
     point_interval = NULL, normalize = "panels",
@@ -143,6 +165,7 @@ p_draws %>%
   geom_point(
     data = p_sums %>%
       drop_na(country) %>%
+      filter(!(outcome=="Selfharm" & abs(Estimate) > .05)) %>% 
       mutate(is_average = TRUE),
     aes(x = Estimate), size = 1, col = "dodgerblue1",
     position = position_nudge(0, -0.075), alpha = .4
@@ -164,12 +187,12 @@ p_draws %>%
           where(is.numeric),
           ~ if_else(
             outcome == "Selfharm",
-            percent(. / 100, .001),
-            percent(. / 100, .01)
+            percent(. / 1000, .0001),
+            percent(. / 1000, .01)
           )
         )
       ),
-    family = Font,
+    family = Font, lineheight = 1,
     alpha = 1, size = 3, hjust = 1, vjust = 0.2,
     fill = NA, label.color = NA,
     aes(
@@ -184,13 +207,31 @@ p_draws %>%
   theme(
     axis.title.y = element_blank(),
     axis.text.y = element_markdown(),
+    panel.spacing.x = unit(10, "pt"), 
+    plot.margin = unit(rep(10, 4), "pt"),
     legend.position = "none"
   )
-x <- percent(fixef(fits$fit2[[1]])["i1_cw",-2]/100)
+x <- percent(fixef(fits$fit2[[1]])["i1_cw",-2]/1000)
 x2 <- percent(hypothesis(fits$fit2[[3]], "i1_cw > 0")$hypothesis$Post.Prob, .1)
+
+# How many selfharm countries not shown on plot for clarity?
+p_sums %>%
+  filter(outcome=="Selfharm") %>% 
+  drop_na(country) %>% 
+  mutate(extreme = abs(Estimate) > .05) %>% 
+  janitor::tabyl(extreme)
+
+# Numbers
+p_sums %>% 
+  filter(region=="Average") %>% 
+  mutate(across(where(is.numeric), ~percent(./1000, .0001))) %>% 
+  transmute(
+    outcome,
+    result = str_glue("{Estimate} [{Q2.5}, {Q97.5}]")
+  )
 ```
 
-This figure shows that, on the whole, the predictive associations between internet adoption and well-being were somewhat small. First, on average across regions and countries, a 100% increase in internet adoption was associated with a `r x[1]` increase in life satisfaction, but with 95% confidence this number could range from `r x[2]` to `r x[3]`. However, in the African region, increased internet adoption was associated with increases in life satisfaction at a confidence level exceeding 95%. Somewhat confusingly, internet adoption was positively associated with negative experiences also in the African region. However, none of the average associations were credibly different from zero. The association between internet adoption and positive experiences came closest with a `r x2` posterior probability of a positive association.
+This figure shows that, on the whole, the predictive associations between internet adoption and well-being were somewhat small. First, on average across regions and countries, a 10% increase in internet adoption was associated with a `r x[1]` increase in life satisfaction, but with 95% confidence this number could range from `r x[2]` to `r x[3]`. However, in the African region, increased internet adoption was associated with increases in life satisfaction at a confidence level exceeding 95%. Somewhat confusingly, internet adoption was positively associated with negative experiences also in the African region. However, none of the average associations were credibly different from zero. The association between internet adoption and positive experiences came closest with a `r x2` posterior probability of a positive association.
 
 ## Counterfactual plot
 
@@ -212,16 +253,18 @@ fitted_country <- function(x) {
     ) %>%
     filter(i1_cw %in% c(xmin, xmax)) %>%
     ungroup() %>%
-    distinct(country, region, outcome, i1_cw, i1_cb) %>%
+    distinct(country, region, i1_cw, i1_cb) %>%
     mutate(year = 0, sex = NA, age = NA, se = 0)
-  newy <- bind_cols(newx, as.data.frame(fitted(x, newdata = newx))) %>%
-    select(-outcome)
+  newy <- bind_cols(
+    newx, 
+    as.data.frame(fitted(x, newdata = newx))
+  )
   newy
 }
 
 fitted_region <- function(x) {
   newx <- x$data %>%
-    group_by(outcome, region) %>%
+    group_by(region) %>%
     summarise(i1_cb = mean(i1_cb, na.rm = TRUE)) %>%
     crossing(i1_cw = seq(-.4, .4, length = 10)) %>%
     mutate(year = 0, sex = NA, age = NA, se = 0)
@@ -233,11 +276,10 @@ fitted_region <- function(x) {
         x, 
         newdata = newx, 
         re_formula = ~ 
-          (year * sex + year * age + i1_cw * sex + i1_cw * age | region)
+          (year * sex * age + i1_cw * sex * age | region)
         )
     )
-  ) %>%
-    select(-outcome)
+  )
   newy
 }
 
@@ -284,6 +326,7 @@ f_country %>%
   ) +
   theme(
     panel.spacing = unit(2, "pt"),
+    aspect.ratio = 1,
     axis.title.y = element_blank()
   )
 ```
@@ -301,7 +344,7 @@ We then focused on the between-country association between internet adoption and
 
 fitted_cb1 <- function(x) {
   newx <- x$data %>%
-    group_by(outcome, region, country) %>%
+    group_by(region, country) %>%
     summarise(i1_cb = unique(i1_cb), val = mean(val, na.rm = TRUE)) %>% 
     mutate(i1_cw = 0, year = 0, sex = NA, age = NA, se = 0) %>% 
     ungroup()
@@ -315,8 +358,7 @@ fitted_cb1 <- function(x) {
         re_formula = NA
         )
     )
-  ) %>%
-    select(-outcome)
+  )
   newy
 }
 tmp <- fits %>% 
