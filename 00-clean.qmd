@@ -624,10 +624,14 @@ itu %>%
 #| label: tbl-gwpsummary
 
 gwp %>%
-  select(region, country, year, gwpi) %>%
-  mutate(internet = internet * 100) %>%
+  filter(year >= 2015) %>% 
+  group_by(region, country, year) %>%
+  summarise(gwpi = mean(gwpi, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(gwpi = gwpi * 100) %>%
   mutate(region = str_replace(region, "_", " ")) %>%
-  pivot_wider(names_from = year, values_from = internet) %>%
+  arrange(year, region, country) %>% 
+  pivot_wider(names_from = year, values_from = gwpi) %>%
   select(-country) %>%
   tbl_summary(
     by = region,
@@ -635,7 +639,9 @@ gwp %>%
     statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
   ) %>%
   add_overall(col_label = "Total") %>%
-  as_kable_extra(caption = "ITU summary") %>%
+  as_kable_extra(
+    caption = "GWP Internet use summary (mean over demographics)"
+  ) %>%
   row_spec(0, bold = TRUE) %>%
   kable_custom()
 ```
