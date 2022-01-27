@@ -93,15 +93,14 @@ psums <- function(x, p = "val_year") {
 #' @return a data frame of fitted values
 fitted_country <- function(x) {
   newx <- x$data %>%
-    group_by(country, region, outcome, year) %>%
+    group_by(country, region, year) %>%
     summarise(val = mean(val, na.rm = TRUE)) %>%
     ungroup() %>%
-    mutate(sex = NA, age = NA, se = 0)
+    mutate(sex = NA, age = NA, se = 0, itu = TRUE)
   newy <- bind_cols(
     newx,
     as.data.frame(fitted(x, newdata = newx, resp = "val"))
-  ) %>%
-    select(-outcome)
+  )
   newy
 }
 
