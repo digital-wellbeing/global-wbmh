@@ -263,7 +263,7 @@ We then clean the GBD data and
 gbd <- clean_names(gbd)
 
 # Confirm that correct measures were downloaded:
-# distinct(gbd, measure, metric)
+distinct(gbd, measure, metric)
 gbd <- select(gbd, -metric, -measure)
 gbd <- gbd %>%
   mutate(across(c(val, upper, lower), ~ .x / 100000))
@@ -287,10 +287,6 @@ gbd <- gbd %>%
 gbd <- gbd %>%
   mutate(se = (upper - lower) / (1.96 * 2)) %>%
   select(-c(upper, lower))
-
-# Focus on young people
-gbd <- gbd %>%
-  filter(age %in% c("10 to 14", "15 to 19", "20 to 24"))
 ```
 
 Then we need to harmonise to country names (always somewhat idiosyncratic) to a common metric. There is a harmonised name for each GBD country, and 27 country names are harmonised.
