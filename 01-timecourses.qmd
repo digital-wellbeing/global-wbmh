@@ -49,6 +49,19 @@ Our first research question concerns changes in mental health and well-being ove
 
 ## Results
 
+Average year-on-year increase in internet adoption
+
+```{r}
+tmp <- itu %>% 
+  arrange(country, year) %>% 
+  group_by(country) %>% 
+  mutate(i = internet - lag(internet)) %>% 
+  summarise(i = mean(i, na.rm = TRUE))
+hist(tmp$i)
+percent(mean(tmp$i, na.rm = TRUE))
+```
+
+
 ### RQ1a: Temporal trends
 
 Before presenting the time trends, we must calculate the required quantities from the posterior distribution. Here we calculate posterior *samples* of region and average-level trends over time, and posterior *summaries* of trends at all levels.
