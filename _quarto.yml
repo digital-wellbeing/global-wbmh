@@ -1,0 +1,35 @@
+project:
+  title: "Global_wb"
+  type: book
+  output-dir: docs
+
+book:
+  title: "Online analysis supplement to Vuorre & Przybylski (in prep)"
+  author: "Matti Vuorre"
+  date: "2022-01-10"
+  sidebar:
+    search: true
+    style: "docked"
+  chapters:
+    - index.qmd
+    - 00-clean.qmd
+    - 00-models.qmd
+    - section: "Main results"
+      contents:
+      - 01-timecourses.qmd
+      - 02-associations.qmd
+      - 03-demographics.qmd
+    - section: "Supplementary results"
+      contents:
+      - 04-fixed-mobile.qmd
+
+execute:
+  warning: false
+  message: false
+  cache: true
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    code-fold: true
