@@ -1,4 +1,4 @@
-# Data preparation {.unnumbered}
+# Data preparation
 
 ```{r setup}
 #| cache: false

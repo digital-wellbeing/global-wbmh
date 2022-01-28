@@ -1,4 +1,4 @@
-# Model fitting {.unnumbered}
+# Models
 
 ```{r setup}
 #| cache: false
