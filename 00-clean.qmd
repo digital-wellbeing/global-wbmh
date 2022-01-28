@@ -119,23 +119,20 @@ gwp <- gwp %>%
   select(-c(wp60:wp74))
 
 # Categorize ages
+gwp <- filter(gwp, age <= 89)
 gwp <- gwp %>%
   mutate(
     age = cut(
       age,
-      breaks = seq(15, 105, by = 5),
+      breaks = seq(15, 90, by = 5),
       include.lowest = TRUE,
       right = FALSE,
-      labels = paste(seq(15, 100, by = 5), "to", seq(19, 104, by = 5))
+      labels = paste(seq(15, 85, by = 5), "to", seq(19, 89, by = 5))
     ) %>% as.character()
   )
 
 # There is one 13 year old which resulted in a NA and we drop it
 gwp <- drop_na(gwp, age)
-
-# Focus on young people
-gwp <- gwp %>%
-  filter(age %in% c("15 to 19", "20 to 24"))
 ```
 
 Instead of working with the person-level scale scores, we aggregate the data to means and standard errors for each cell as defined by the predictors (country, year, age, sex). Because we treat outcomes as normal this greatly simplifies and speeds up the computations without affecting the results, and also makes the data format concordant with the GBD data.
@@ -155,7 +152,8 @@ gwp <- gwp %>%
   ) %>%
   group_by(country, year, sex, age, outcome, gwpi) %>%
   summarise(
-    se = sd(val, na.rm = TRUE) / sqrt(n()),
+    n = n(),
+    se = sd(val, na.rm = TRUE) / sqrt(n),
     val = mean(val, na.rm = TRUE)
   ) %>%
   ungroup()
