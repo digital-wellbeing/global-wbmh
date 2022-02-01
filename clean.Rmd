@@ -42,8 +42,7 @@ read_spss(
     WPID, WP1219,
     WP16,
     WP60, WP61, WP63, WP65, WP67,
-    WP68, WP69, WP70, WP71, WP74,
-    WP16056
+    WP68, WP69, WP70, WP71, WP74
   )
 ) %>%
   generate_dictionary()
@@ -72,8 +71,7 @@ if (!file.exists(gwp_path)) {
       WPID, WP1220, WP1219,
       WP16,
       WP60, WP61, WP63, WP65, WP67,
-      WP68, WP69, WP70, WP71, WP74,
-      WP16056
+      WP68, WP69, WP70, WP71, WP74
     )
   )
 
@@ -102,9 +100,7 @@ gwp <- gwp %>%
     Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
     across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
     # Also reverse the weird 1: yes 2: no coding here
-    across(wp60:wp74, ~ 3 - .),
-    # Internet (fix NAs and reverse 1:yes 2:no coding to 1:no 2:yes)
-    gwpi = 2 - if_else(between(wp16056, 1, 2), wp16056, NaN)
+    across(wp60:wp74, ~ 3 - .)
   )
 
 # Scale scores note rescaling
@@ -139,9 +135,6 @@ Instead of working with the person-level scale scores, we aggregate the data to 
 
 ```{r gallup-summarise}
 gwp <- gwp %>%
-  # Aggregate internet
-  group_by(country, year, sex, age) %>% 
-  mutate(gwpi = mean(gwpi, na.rm = TRUE)) %>% 
   pivot_longer(
     c(
       Life_satisfaction,
@@ -150,7 +143,7 @@ gwp <- gwp %>%
     ),
     names_to = "outcome", values_to = "val"
   ) %>%
-  group_by(country, year, sex, age, outcome, gwpi) %>%
+  group_by(country, year, sex, age, outcome) %>%
   summarise(
     n = n(),
     se = sd(val, na.rm = TRUE) / sqrt(n),
@@ -206,20 +199,7 @@ We then load the synthetic GWP dataset if the real data was not found. This is j
 gwp_mock_path <- "data-raw/gwp-MOCK.rds"
 if (!file.exists(gwp_mock_path)) {
   set.seed(101010)
-  distinct(gwp, outcome, country, year, sex, age, gwpi) %>% 
-    mutate(
-      se = rnorm(
-        nrow(.), 
-        mean(gwp$se, na.rm = TRUE), 
-        sd(gwp$se, na.rm = TRUE)
-      ),
-      val = rnorm(
-        nrow(.), 
-        mean(gwp$val, na.rm = TRUE), 
-        sd(gwp$val, na.rm = TRUE)
-      )
-    ) %>% 
-    write_rds(gwp_mock_path, compress = "xz")
+  # TODO
 }
 # Load if actual data doesn't exist
 if (!dir.exists("data-raw/Gallup")) {
@@ -444,7 +424,7 @@ We then impute missing intermediate values to the internet adoption timeseries. 
 
 # Reshape to easily impute all variables
 itu_long <- itu %>%
-  pivot_longer(c(internet, fixed, mobile))
+  pivot_longer(c(internet, mobile))
 
 # Impute by country and variable
 itu_long <- itu_long %>%
@@ -610,34 +590,88 @@ itu %>%
   kable_custom()
 ```
 
-## GWP summary table
+## Prepare model data
 
-```{r gwp-summary-table}
-#| column: page-right
-#| tbl-cap: "Mean internet user percentages across regions and time from the GWP data."
-#| label: tbl-gwpsummary
+-   Create lagged and centered predictors
+-   Transform edge values of internet variable to fit beta
+    -   2 values were changed (0 in Timor-Leste in 2002, and 1 in UAE 2020)
+-   Join outcome and predictor tables
+-   Center year on 2010 (roughly in the middle)
+-   Ensure that age and sex are treated with contrast codes
 
-gwp %>%
-  filter(year >= 2015) %>% 
-  group_by(region, country, year) %>%
-  summarise(gwpi = mean(gwpi, na.rm = TRUE)) %>% 
+```{r model-prepare-data}
+# Create lagged predictors
+itu <- itu %>% 
+  arrange(region, country, year) %>%
+  group_by(region, country) %>%
+  mutate(
+    across(
+      c(internet, mobile),
+      list(`1` = ~ lag(., 1)),
+      .names = "{str_sub(.col, 1, 1)}{.fn}"
+    )
+  ) %>% 
+  ungroup()
+
+# Centering predictors within and between countries
+itu <- itu %>%
+  group_by(country) %>%
+  mutate(
+    i1_cb = mean(i1, na.rm = TRUE), # Country average
+    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
+    m1_cb = mean(m1, na.rm = TRUE),
+    m1_cw = m1 - m1_cb,
+  ) %>%
+  # Grand-mean center the country averages
   ungroup() %>% 
-  mutate(gwpi = gwpi * 100) %>%
-  mutate(region = str_replace(region, "_", " ")) %>%
-  arrange(year, region, country) %>% 
-  pivot_wider(names_from = year, values_from = gwpi) %>%
-  select(-country) %>%
-  tbl_summary(
-    by = region,
-    missing = "no",
-    statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
-  ) %>%
-  add_overall(col_label = "Total") %>%
-  as_kable_extra(
-    caption = "GWP Internet use summary (mean over demographics)"
-  ) %>%
-  row_spec(0, bold = TRUE) %>%
-  kable_custom()
+  mutate(
+    across(c(i1_cb, m1_cb), ~ . - mean(., na.rm = T))
+  )
+
+# Transform internet edge cases
+itu <- itu %>%
+  mutate(internet = if_else(internet == 0, .0000001, internet)) %>%
+  mutate(internet = if_else(internet == 1, .9999999, internet))
+
+# Stack outcome data
+dat <- bind_rows(gwp, gbd)
+
+# Merge predictors to outcomes
+dat <- left_join(dat, itu)
+
+# Center and scale year
+dat <- dat %>%
+  mutate(year = (year - 2010) / 10)
+
+# Identify values to use in mv models
+# Indicate unique ITU values for MV model
+dat <- dat %>%
+  # Unique values exist for each country-year, but must be given for each
+  # outcome
+  group_by(region, country, year, outcome) %>%
+  mutate(itu = 1:n() == 1) %>%
+  ungroup()
+
+# Ensure that categorical variables are factors
+dat <- dat %>%
+  mutate(across(c(sex, age), factor))
+
+# Model outcomes on the percentage (0-100) scale. Note internet is still 0-1
+dat <- dat %>%
+  mutate(across(c(val, se), ~ . * 100))
+
+# Arrange on outcome
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+dat <- dat %>%
+  mutate(outcome = factor(outcome, levels = oo)) %>% 
+  arrange(outcome, region, country, year)
+
+# Selfharm models don't converge with SEs
+dat <- dat %>% 
+  mutate(se = if_else(outcome == "Selfharm", 0, se))
 ```
 
 ## Write data tables
@@ -645,6 +679,7 @@ gwp %>%
 We have organised our code into separate files, and so save the processed data here for use in the other analysis scripts.
 
 ```{r}
+write_rds(dat, "data/data-all.rds")
 write_rds(itu, "data/itu.rds")
 write_rds(gwp, "data/gwp.rds")
 write_rds(gbd, "data/gbd.rds")
