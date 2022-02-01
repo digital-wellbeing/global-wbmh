@@ -9,7 +9,6 @@ library(lubridate)
 library(kableExtra)
 library(ggstance)
 library(mgcv)
-library(brms)
 library(cmdstanr)
 library(ellipse)
 library(ggh4x)
@@ -19,160 +18,11 @@ library(posterior)
 library(parameters)
 library(emmeans)
 library(broom)
+library(brms)
 library(tidyverse)
-
-# MCMC settings (ensure at most 12 cores)
-ncores <- min(parallel::detectCores(logical = FALSE), 12)
-nchains <- 4
-options(brms.backend = "cmdstanr")
-hmc <- list(
-  chains = nchains,
-  cores = nchains,
-  threads = ncores %/% nchains,
-  iter = 2500,
-  warmup = 1000,
-  refresh = 50,
-  adapt_delta = .90,
-  max_treedepth = 10
-)
-
-# Create directory for intermediate files
-dir.create("models", FALSE)
-
-# Load data sets
-itu <- read_rds("data/itu.rds")
-gwp <- read_rds("data/gwp.rds")
-gbd <- read_rds("data/gbd.rds")
 ```
 
 ## Model 1
-
-We first prepare the variables for modelling:
-
--   Create lagged and centered predictors
--   Transform edge values of internet variable to fit beta
-    -   2 values were changed (0 in Timor-Leste in 2002, and 1 in UAE 2020)
--   Join outcome and predictor tables
--   Center year on 2010 (roughly in the middle)
--   Ensure that age and sex are treated with contrast codes
-
-```{r model1-prepare-data}
-# Create lagged predictors
-itu <- itu %>% 
-  arrange(region, country, year) %>%
-  group_by(region, country) %>%
-  mutate(
-    across(
-      c(internet, fixed, mobile),
-      list(`1` = ~ lag(., 1)),
-      .names = "{str_sub(.col, 1, 1)}{.fn}"
-    )
-  ) %>% 
-  ungroup()
-
-# Centering predictors within and between countries
-itu <- itu %>%
-  group_by(country) %>%
-  mutate(
-    i1_cb = mean(i1, na.rm = TRUE), # Country average
-    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
-    f1_cb = mean(f1, na.rm = TRUE),
-    f1_cw = f1 - f1_cb,
-    m1_cb = mean(m1, na.rm = TRUE),
-    m1_cw = m1 - m1_cb,
-  ) %>%
-  # Grand-mean center the country averages
-  ungroup() %>% 
-  mutate(
-    across(c(i1_cb, f1_cb, m1_cb), ~ . - mean(., na.rm = T))
-  )
-
-# Transform internet edge cases
-itu <- itu %>%
-  mutate(internet = if_else(internet == 0, .0000001, internet)) %>%
-  mutate(internet = if_else(internet == 1, .9999999, internet))
-
-# Stack outcome data
-dat <- bind_rows(gwp, gbd)
-
-# Merge predictors to outcomes
-dat <- left_join(dat, itu)
-
-# Center and scale year
-dat <- dat %>%
-  mutate(year = (year - 2010) / 10)
-
-# Identify values to use in mv models
-# Indicate unique ITU values for MV model
-dat <- dat %>%
-  # Unique values exist for each country-year, but must be given for each
-  # outcome
-  group_by(region, country, year, outcome) %>%
-  mutate(itu = 1:n() == 1) %>%
-  ungroup()
-
-# Ensure that factors are contrast coded
-dat <- dat %>%
-  mutate(across(c(sex, age), factor))
-options(contrasts = c(unordered = "contr.sum", ordered = "contr.poly"))
-
-# Model outcomes on the percentage (0-100) scale. Note internet is still 0-1
-dat <- dat %>%
-  mutate(across(c(val, se), ~ . * 100))
-
-# Arrange on outcome
-oo <- c(
-  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
-  "Anxiety", "Depression", "Selfharm"
-)
-dat <- dat %>%
-  mutate(outcome = factor(outcome, levels = oo)) %>% 
-  arrange(dat, outcome, region, country, year)
-
-dat %>%
-  group_by(outcome) %>%
-  summarise(
-    min = min(val, na.rm = TRUE),
-    max = max(val, na.rm = TRUE),
-    internet_min = min(internet, na.rm = TRUE),
-    internet_max = max(internet, na.rm = TRUE)
-  ) %>%
-  kable(digits = 7) %>% 
-  kable_custom()
-```
-
-We then create the lagged and centered GWP internet predictor. Note that this is at the level of demographics, not just a country average like in ITU.
-
-```{r}
-# Take only relevant variables to make this easier
-gwpi <- dat %>% 
-  filter(outcome == "Life_satisfaction") %>% 
-  filter(year >= .5) %>% 
-  select(region, country, year, sex, age, year, gwpi)
-
-# Create lagged GWP internet
-gwpi <- gwpi %>% 
-  arrange(region, country, sex, age, year) %>% 
-  group_by(region, country, sex, age) %>% 
-  mutate(g1 = lag(gwpi, 1))
-
-# Center GWP internet
-gwpi <- gwpi %>%
-  group_by(country) %>%
-  mutate(
-    g1_cb = mean(g1, na.rm = TRUE), # Country average
-    g1_cw = g1 - g1_cb, # Year-specific deviation from country average
-  ) %>%
-  # Grand-mean center the country averages
-  ungroup() %>% 
-  mutate(
-    g1_cb = g1_cb - mean(g1_cb, na.rm = TRUE)
-  )
-
-# Join to data (all outcomes)
-dat <- left_join(dat, select(gwpi, -gwpi))
-```
-
 
 ### Specification
 
@@ -226,70 +76,21 @@ We then define the model formulas in brms' formula syntax. First, for internet a
 
 ```{r model1-itu-bf}
 #| echo: true
-# Define a model of internet proportion over year
-bf_itu <- bf(
-  internet | resp_subset(itu) ~
-  year +
-    (year |c| country) +
-    (year |r| region),
-  family = Beta()
-)
 ```
 
 Here, we specify the outcome model. Note the `|c|` and `|r|` that link the countries' and regions', respectively, random effects of this model with the previous' model. Then, we specify `resp_se(se, sigma = TRUE)` to enable "meta-regression" with known standard errors. In addition, it leads to the residual variance to be estimated.
 
 ```{r model1-val-bf}
 #| echo: true
-# Meta-regression model of outcomes
-bf_1 <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-  year * sex * age +
-    (year * sex * age | c | country) +
-    (year * sex * age | r | region),
-  family = gaussian()
-)
 ```
 
 Finally, after numerous attempts we were unable to fit a model with meta-analytic standard errors with self-harm as the outcome in a way that would have converged. We therefore effectively removed the SEs from self-harm by setting them to zero
 
-```{r model1-selfharm-se}
-#| echo: true
-dat <- dat %>% 
-  mutate(se = if_else(outcome == "Selfharm", 0, se))
-```
-
 ### Fitting
-
-We then create a table where each row is a dataset and a model to be fitted, and then fit the models row-by-row. This takes about a day for the six outcomes.
 
 ```{r fit-model-1}
 #| cache: false
-fits <- dat %>%
-  # Could nest but need this to include group key in nested tibble
-  group_by(outcome) %>%
-  summarise(data = list(cur_data_all()))
 
-fits <- fits %>%
-  mutate(
-    fit1 = map2(
-      data, outcome,
-      ~brm(
-        formula = bf_itu + bf_1 + set_rescor(FALSE),
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-1-internet")
-      )
-    )
-  )
 ```
 
 ### Summary
@@ -477,38 +278,7 @@ Where $\text{Internet}^{\text{t-1}}_i$ is the within-country centered 1-year-lag
 ```{r fit-model-2}
 #| cache: false
 #| results: hide
-# Model formula is only a small update to Model 1
-bf_2 <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-  year * sex * age + i1_cw * sex * age + i1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
-  family = gaussian()
-)
 
-# As above with model 1
-# Note we don't need to save these in the R environment, just files
-fits %>%
-  mutate(
-    fit2 = map2(
-      data, outcome,
-      ~brm(
-        formula = bf_2,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-internet")
-      )
-    )
-  )
 ```
 
 ## Other predictors
@@ -518,102 +288,7 @@ Here we further fit model 2 using the different internet predictors
 ```{r fixed-mobile}
 #| cache: false
 #| results: hide
-bf_2_f <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-  year * sex * age + i1_cw * sex * age + f1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
-  family = gaussian(),
-  unused = ~outcome
-)
 
-bf_2_m <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-  year * sex * age + i1_cw * sex * age + m1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
-  family = gaussian(),
-  unused = ~outcome
-)
 
-bf_2_g <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-  year * sex * age + i1_cw * sex * age + g1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
-  family = gaussian(),
-  unused = ~outcome
-)
 
-fits %>%
-  mutate(
-    fit2_f = map2(
-      data, outcome,
-      ~brm(
-        formula = bf_2_f,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-fixed")
-      )
-    )
-  )
-
-fits %>%
-  mutate(
-    fit2_m = map2(
-      data, outcome,
-      ~brm(
-        formula = bf_2_m,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-mobile")
-      )
-    )
-  )
-
-fits %>%
-  mutate(
-    fit2_g = map2(
-      data, outcome,
-      ~brm(
-        formula = bf_2_g,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-gwpinternet")
-      )
-    )
-  )
 ```
-
-
-```{r}
-fits$data[[1]] %>% select(country, year, g1_cb) %>% drop_na(g1_cb)
-```
-
