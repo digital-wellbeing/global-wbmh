@@ -2,7 +2,7 @@
 
 # Accept outcome names as command line arguments
 cmdargs <- commandArgs(trailingOnly = TRUE)
-cat("Estimating model for outcome(s)", paste(cmdargs, collapse = ", "), "\n")
+cat("\n***\nEstimating model for outcome(s)", paste(cmdargs, collapse = ", "), "\n***\n")
 
 
 # ---- setup ---------------------------------------------------------------
