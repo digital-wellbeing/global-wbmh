@@ -2,7 +2,7 @@
 
 # Runs the R script models.R with arguments from --array
 # It requests 12 cores per model
-# Use sbatch --array=1-6 to use a job array to submit 6 tasks
+# Use sbatch submit.sh --array=1-6 to use a job array to submit 6 tasks
 
 #SBATCH --constraint='cpu_frq:2.90GHz'
 #SBATCH --cpus-per-task=12
