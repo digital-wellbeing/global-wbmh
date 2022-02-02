@@ -1,21 +1,26 @@
 # Independent script to fit models
 
-# Setup -------------------------------------------------------------------
+# Accept outcome names as command line arguments
+cmdargs <- commandArgs(trailingOnly = TRUE)
+cat("Estimating model for outcome(s)", paste(cmdargs, collapse = ", "), "\n")
+
+
+# ---- setup ---------------------------------------------------------------
 
 library(cmdstanr)
 library(brms)
 library(tidyverse)
 
-# MCMC settings (ensure at most 12 cores)
-ncores <- min(parallel::detectCores(logical = FALSE), 12)
+# MCMC settings (max 12 cores)
+(ncores <- min(parallel::detectCores(logical = FALSE), 12))
 nchains <- 4
 options(brms.backend = "cmdstanr")
 hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = ncores %/% nchains,
-  iter = 2500,
-  warmup = 1250,
+  iter = 3000,
+  warmup = 1500,
   refresh = 100,
   adapt_delta = .90,
   max_treedepth = 10
@@ -31,12 +36,16 @@ dat <- readRDS("data/data-all.rds")
 options(contrasts = c(unordered = "contr.sum", ordered = "contr.poly"))
 
 # Nest data frames to fit models programmatically
+# Fit models only to outcome(s) specified in command line arguments
 fits <- dat %>%
   group_by(outcome) %>%
   nest() %>%
   ungroup()
 
-# Model 1 formulas --------------------------------------------------------
+# Use command line arguments
+fits <- fits[cmdargs, ]
+
+# model-1 -----------------------------------------------------------------
 
 
 bf_itu <- bf(
@@ -58,9 +67,6 @@ bf_1 <- bf(
   family = gaussian()
 )
 
-# Model 1 fit -------------------------------------------------------------
-
-
 fits %>%
   mutate(
     fit1 = walk2(
@@ -78,21 +84,23 @@ fits %>%
           adapt_delta = hmc$adapt_delta,
           max_treedepth = hmc$max_treedepth
         ),
-        save_pars = save_pars(group = c("country", "region", "age")),
         file = str_glue("models/brm-{.y}-1-internet")
       )
     )
   )
 
-# Model 2 -----------------------------------------------------------------
+# model-2 -----------------------------------------------------------------
 
 
 # Model formula is only a small update to Model 1
 bf_2 <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-    year * sex * age + i1_cw * sex * age + i1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
+  val | se(se, sigma = TRUE) ~
+    (year + i1_cw) * sex + i1_cb +
+    ((year + i1_cw) * sex | country) +
+    ((year + i1_cw) * sex | region) +
+    ((year + i1_cw) * sex || age) +
+    ((year + i1_cw) * sex || age:country) +
+    ((year + i1_cw) * sex || age:region),
   family = gaussian()
 )
 
@@ -120,14 +128,17 @@ fits %>%
     )
   )
 
-# Model 2 mobile ----------------------------------------------------------
+# model-2-m ---------------------------------------------------------------
 
 
 bf_2_m <- bf(
-  val | resp_se(se, sigma = TRUE) ~
-    year * sex * age + i1_cw * sex * age + m1_cb +
-    (year * sex * age + i1_cw * sex * age | country) +
-    (year * sex * age + i1_cw * sex * age | region),
+  val | se(se, sigma = TRUE) ~
+    (year + m1_cw) * sex + m1_cb +
+    ((year + m1_cw) * sex | country) +
+    ((year + m1_cw) * sex | region) +
+    ((year + m1_cw) * sex || age) +
+    ((year + m1_cw) * sex || age:country) +
+    ((year + m1_cw) * sex || age:region),
   family = gaussian(),
   unused = ~outcome
 )
