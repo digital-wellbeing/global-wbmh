@@ -36,23 +36,24 @@ msum <- function(x) {
   )
 }
 
-#' Posterior draws at average and region levels
+#' Posterior draws at average and grouping levels
 #'
-#' @param x brmsfit (model 1/2)
+#' @param x brmsfit model 1/2
 #' @param p name of parameter
+#' @param grouping the grouping factor (e.g. region)
 #'
-#' @return a long tibble posterior draws of p for every region (including the average, so useful for e.g. forest plots)
-pdraws <- function(x, p = "val_year") {
+#' @return a long tibble of posterior draws of p for every group in grouping (including the average, so useful for e.g. forest plots)
+pdraws <- function(x, p = "val_year", grouping = "region") {
   bind_cols(
     tibble("Average" = fixef(x, summary = FALSE)[, p]),
-    as_tibble(coef(x, summary = FALSE)$region[, , p])
+    as_tibble(coef(x, summary = FALSE)[[grouping]][, , p])
   ) %>%
-    pivot_longer(everything(), names_to = "region")
+    pivot_longer(everything(), names_to = grouping)
 }
 
-#' Posterior summaries at country- region- and average levels
+#' Country-specific posterior summaries
 #'
-#' @param x brmsfit (model 1/2)
+#' @param x brmsfit model 1/2
 #' @param p name of parameter
 #'
 #' @return a long tibble with posterior summary of p at each level
@@ -99,7 +100,14 @@ fitted_country <- function(x) {
     mutate(sex = NA, age = NA, se = 0, itu = TRUE)
   newy <- bind_cols(
     newx,
-    as.data.frame(fitted(x, newdata = newx, resp = "val"))
+    as.data.frame(
+      fitted(
+        x,
+        newdata = newx,
+        resp = "val",
+        re_formula = ~ (year * sex | country) + (year * sex | region)
+        )
+      )
   )
   newy
 }
