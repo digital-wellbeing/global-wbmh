@@ -7,6 +7,7 @@ cat("\n***\nEstimating model for outcome(s)", paste(cmdargs, collapse = ", "), "
 
 # ---- setup ---------------------------------------------------------------
 
+options(tidyverse.quiet = TRUE)
 library(cmdstanr)
 library(brms)
 library(tidyverse)
@@ -19,8 +20,8 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = ncores %/% nchains,
-  iter = 3000,
-  warmup = 1500,
+  iter = 2500,
+  warmup = 1250,
   refresh = 100,
   adapt_delta = .90,
   max_treedepth = 10
@@ -42,7 +43,7 @@ fits <- dat %>%
   nest() %>%
   ungroup()
 
-# Use command line arguments
+# Pick Nth row given by command line argument N (1-6)
 fits <- fits[cmdargs, ]
 
 # model-1 -----------------------------------------------------------------
@@ -88,6 +89,7 @@ fits %>%
       )
     )
   )
+message("\nModel 1 done\n")
 
 # model-2 -----------------------------------------------------------------
 
@@ -127,6 +129,7 @@ fits %>%
       )
     )
   )
+message("\nModel 2 done\n")
 
 # model-2-m ---------------------------------------------------------------
 
@@ -164,3 +167,4 @@ fits %>%
       )
     )
   )
+message("\nModel 2M done\n")
