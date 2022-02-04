@@ -142,8 +142,7 @@ bf_2_m <- bf(
     ((year + m1_cw) * sex || age) +
     ((year + m1_cw) * sex || age:country) +
     ((year + m1_cw) * sex || age:region),
-  family = gaussian(),
-  unused = ~outcome
+  family = gaussian()
 )
 
 fits %>%
