@@ -3,6 +3,8 @@
 # command line argument must be 1-18 to pick a model from the combinations
 # of outcomes (6) and models (3)
 cmdargs <- commandArgs(trailingOnly = TRUE)
+cmdargs <- as.numeric(cmdargs)
+cat("Fitting row", cmdargs)
 
 # ---- setup ---------------------------------------------------------------
 
