@@ -1,9 +1,8 @@
 # Independent script to fit models
 
-# Accept outcome names as command line arguments
+# command line argument must be 1-18 to pick a model from the combinations
+# of outcomes (6) and models (3)
 cmdargs <- commandArgs(trailingOnly = TRUE)
-cat("\n***\nEstimating model for outcome(s)", paste(cmdargs, collapse = ", "), "\n***\n")
-
 
 # ---- setup ---------------------------------------------------------------
 
@@ -12,16 +11,16 @@ library(cmdstanr)
 library(brms)
 library(tidyverse)
 
-# MCMC settings (max 12 cores)
+# MCMC settings
 (ncores <- min(parallel::detectCores(logical = FALSE), 12))
 nchains <- 4
 options(brms.backend = "cmdstanr")
 hmc <- list(
   chains = nchains,
   cores = nchains,
-  threads = ncores %/% nchains,
+  threads = min(ncores %/% nchains, 2),
   iter = 2500,
-  warmup = 1250,
+  warmup = 1300,
   refresh = 100,
   adapt_delta = .90,
   max_treedepth = 10
@@ -37,17 +36,13 @@ dat <- readRDS("data/data-all.rds")
 options(contrasts = c(unordered = "contr.sum", ordered = "contr.poly"))
 
 # Nest data frames to fit models programmatically
-# Fit models only to outcome(s) specified in command line arguments
 fits <- dat %>%
   group_by(outcome) %>%
   nest() %>%
   ungroup()
 
-# Pick Nth row given by command line argument N (1-6)
-fits <- fits[cmdargs, ]
 
-# model-1 -----------------------------------------------------------------
-
+# models ------------------------------------------------------------------
 
 bf_itu <- bf(
   internet | subset(itu) ~
@@ -57,7 +52,7 @@ bf_itu <- bf(
   family = Beta()
 )
 
-bf_1 <- bf(
+bf_val <- bf(
   val | se(se, sigma = TRUE) ~
     year * sex +
     (year * sex | c | country) +
@@ -68,36 +63,24 @@ bf_1 <- bf(
   family = gaussian()
 )
 
-fits %>%
-  mutate(
-    fit1 = walk2(
-      data, outcome,
-      ~brm(
-        formula = bf_itu + bf_1 + set_rescor(FALSE),
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-1-internet")
-      )
-    )
-  )
-message("\nModel 1 done\n")
+bf_1 <- bf_itu + bf_val + set_rescor(FALSE)
 
-# model-2 -----------------------------------------------------------------
+# Simplified model for self-harm
+bf_val.s <- bf(
+  val | se(se, sigma = TRUE) ~
+    year * sex +
+    (year * sex | c | country) +
+    (year * sex | r | region) +
+    (year * sex || age) +
+    (year * sex || age:region),
+  family = gaussian()
+)
 
+bf_1.s <- bf_itu + bf_val.s + set_rescor(FALSE)
 
-# Model formula is only a small update to Model 1
 bf_2 <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + i1_cw) * sex + i1_cb +
+    (year + i1_cw) * sex +
     ((year + i1_cw) * sex | country) +
     ((year + i1_cw) * sex | region) +
     ((year + i1_cw) * sex || age) +
@@ -106,65 +89,56 @@ bf_2 <- bf(
   family = gaussian()
 )
 
-# As above with model 1
-# Note we don't need to save these in the R environment, just files
-fits %>%
-  mutate(
-    fit2 = walk2(
-      data, outcome,
-      ~brm(
-        formula = bf_2,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-internet")
-      )
-    )
-  )
-message("\nModel 2 done\n")
-
-# model-2-m ---------------------------------------------------------------
-
-
-bf_2_m <- bf(
+bf_2.s <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + m1_cw) * sex + m1_cb +
+    (year + i1_cw) * sex +
+    ((year + i1_cw) * sex | country) +
+    ((year + i1_cw) * sex | region) +
+    ((year + i1_cw) * sex || age) +
+    ((year + i1_cw) * sex || age:region),
+  family = gaussian()
+)
+
+bf_3 <- bf(
+  val | se(se, sigma = TRUE) ~
+    (year + m1_cw) * sex +
     ((year + m1_cw) * sex | country) +
     ((year + m1_cw) * sex | region) +
     ((year + m1_cw) * sex || age) +
     ((year + m1_cw) * sex || age:country) +
     ((year + m1_cw) * sex || age:region),
-  family = gaussian(),
-  unused = ~outcome
+  family = gaussian()
 )
 
-fits %>%
+bf_3.s <- bf(
+  val | se(se, sigma = TRUE) ~
+    (year + m1_cw) * sex +
+    ((year + m1_cw) * sex | country) +
+    ((year + m1_cw) * sex | region) +
+    ((year + m1_cw) * sex || age) +
+    ((year + m1_cw) * sex || age:region),
+  family = gaussian()
+)
+
+fits <- fits %>%
+  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3), model = 1:3))
+
+fits <- fits %>%
   mutate(
-    fit2_m = walk2(
-      data, outcome,
-      ~brm(
-        formula = bf_2_m,
-        data = .x,
-        chains = hmc$chains,
-        cores = hmc$cores,
-        threads = hmc$threads,
-        iter = hmc$iter,
-        warmup = hmc$warmup,
-        refresh = hmc$refresh,
-        control = list(
-          adapt_delta = hmc$adapt_delta,
-          max_treedepth = hmc$max_treedepth
-        ),
-        file = str_glue("models/brm-{.y}-2-mobile")
-      )
+    bfrm = case_when(
+      outcome == "Selfharm" & model == 1 ~ list(bf_1.s),
+      outcome == "Selfharm" & model == 2 ~ list(bf_2.s),
+      outcome == "Selfharm" & model == 3 ~ list(bf_3.s),
+      TRUE ~ bfrm
     )
   )
-message("\nModel 2M done\n")
+
+
+
+# fit model ---------------------------------------------------------------
+
+hmc$data <- fits$data[[cmdargs]]
+hmc$formula <- fits$bfrm[[cmdargs]]
+hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
+
+do.call(brm, hmc)
