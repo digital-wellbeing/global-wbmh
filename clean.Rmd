@@ -649,7 +649,7 @@ dat <- dat %>%
   # Unique values exist for each country-year, but must be given for each
   # outcome
   group_by(region, country, year, outcome) %>%
-  mutate(itu = 1:n() == 1) %>%
+  mutate(itu = 1:n() == 1, itum = 1:n() == 1) %>%
   ungroup()
 
 # Ensure that categorical variables are factors

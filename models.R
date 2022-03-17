@@ -122,8 +122,19 @@ bf_3.s <- bf(
   family = gaussian()
 )
 
+bf_mobile <- bf(
+  mobile | subset(itum) ~
+    year +
+    (year |c| country) +
+    (year |r| region),
+  family = Beta()
+)
+
+bf_4 <- bf_mobile + bf_val + set_rescor(FALSE)
+bf_4.s <- bf_mobile + bf_val.s + set_rescor(FALSE)
+
 fits <- fits %>%
-  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3), model = 1:3))
+  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
 
 fits <- fits %>%
   mutate(
@@ -131,9 +142,11 @@ fits <- fits %>%
       outcome == "Selfharm" & model == 1 ~ list(bf_1.s),
       outcome == "Selfharm" & model == 2 ~ list(bf_2.s),
       outcome == "Selfharm" & model == 3 ~ list(bf_3.s),
+      outcome == "Selfharm" & model == 4 ~ list(bf_4.s),
       TRUE ~ bfrm
     )
-  )
+  ) %>%
+  arrange(model, outcome)
 
 
 
