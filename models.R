@@ -4,7 +4,7 @@
 # of outcomes (6) and models (3)
 cmdargs <- commandArgs(trailingOnly = TRUE)
 cmdargs <- as.numeric(cmdargs)
-cat("Fitting row", cmdargs)
+cat("\nFitting row\n", cmdargs)
 
 # ---- setup ---------------------------------------------------------------
 
@@ -21,11 +21,11 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = min(ncores %/% nchains, 2),
-  iter = 2500,
-  warmup = 1300,
+  iter = 2200,
+  warmup = 1100,
   refresh = 100,
-  adapt_delta = .90,
-  max_treedepth = 10
+  adapt_delta = .99,
+  max_treedepth = 15
 )
 
 # Create directory for intermediate files
