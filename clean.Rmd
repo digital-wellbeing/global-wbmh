@@ -631,9 +631,7 @@ itu <- itu %>%
 # Transform internet edge cases
 itu <- itu %>%
   mutate(internet = if_else(internet == 0, .0000001, internet)) %>%
-  mutate(internet = if_else(internet == 1, .9999999, internet)) %>% 
-  mutate(mobile = if_else(mobile == 0, .0000001, mobile)) %>%
-  mutate(mobile = if_else(mobile == 1, .9999999, mobile))
+  mutate(internet = if_else(internet == 1, .9999999, internet))
 
 # Stack outcome data
 dat <- bind_rows(gwp, gbd)
@@ -651,7 +649,7 @@ dat <- dat %>%
   # Unique values exist for each country-year, but must be given for each
   # outcome
   group_by(region, country, year, outcome) %>%
-  mutate(itu = 1:n() == 1, itum = 1:n() == 1) %>%
+  mutate(itu = 1:n() == 1) %>%
   ungroup()
 
 # Ensure that categorical variables are factors

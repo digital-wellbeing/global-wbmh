@@ -126,8 +126,7 @@ bf_mobile <- bf(
   mobile | subset(itum) ~
     year +
     (year |c| country) +
-    (year |r| region),
-  family = Beta()
+    (year |r| region)
 )
 
 bf_4 <- bf_mobile + bf_val + set_rescor(FALSE)
