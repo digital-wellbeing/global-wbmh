@@ -631,7 +631,9 @@ itu <- itu %>%
 # Transform internet edge cases
 itu <- itu %>%
   mutate(internet = if_else(internet == 0, .0000001, internet)) %>%
-  mutate(internet = if_else(internet == 1, .9999999, internet))
+  mutate(internet = if_else(internet == 1, .9999999, internet)) %>% 
+  mutate(mobile = if_else(mobile == 0, .0000001, mobile)) %>%
+  mutate(mobile = if_else(mobile == 1, .9999999, mobile))
 
 # Stack outcome data
 dat <- bind_rows(gwp, gbd)
