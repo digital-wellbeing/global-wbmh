@@ -1,7 +1,7 @@
 # Independent script to fit models
 
-# command line argument must be 1-18 to pick a model from the combinations
-# of outcomes (6) and models (3)
+# command line argument must be 1-24 to pick a model from the combinations
+# of outcomes (6) and models (4)
 cmdargs <- commandArgs(trailingOnly = TRUE)
 cmdargs <- as.numeric(cmdargs)
 cat("\nFitting row\n", cmdargs)
@@ -24,8 +24,8 @@ hmc <- list(
   iter = 2200,
   warmup = 1100,
   refresh = 100,
-  adapt_delta = .99,
-  max_treedepth = 15
+  adapt_delta = .95,
+  max_treedepth = 12
 )
 
 # Create directory for intermediate files
