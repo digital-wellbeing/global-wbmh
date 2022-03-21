@@ -135,13 +135,14 @@ bf_4.s <- bf_mobile + bf_val.s + set_rescor(FALSE)
 fits <- fits %>%
   crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
 
+# Simplify models for mental health outcomes
 fits <- fits %>%
   mutate(
     bfrm = case_when(
-      outcome == "Selfharm" & model == 1 ~ list(bf_1.s),
-      outcome == "Selfharm" & model == 2 ~ list(bf_2.s),
-      outcome == "Selfharm" & model == 3 ~ list(bf_3.s),
-      outcome == "Selfharm" & model == 4 ~ list(bf_4.s),
+      !str_detect(outcome, "_") & model == 1 ~ list(bf_1.s),
+      !str_detect(outcome, "_") & model == 2 ~ list(bf_2.s),
+      !str_detect(outcome, "_") & model == 3 ~ list(bf_3.s),
+      !str_detect(outcome, "_") & model == 4 ~ list(bf_4.s),
       TRUE ~ bfrm
     )
   ) %>%
