@@ -5,7 +5,7 @@
 
 #SBATCH --constraint='cpu_frq:2.90GHz'
 #SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=2G
+#SBATCH --mem-per-cpu=3G
 #SBATCH --time=4-00:00:00
 #SBATCH --job-name=DWG-Global
 
