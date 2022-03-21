@@ -139,10 +139,10 @@ fits <- fits %>%
 fits <- fits %>%
   mutate(
     bfrm = case_when(
-      !str_detect(outcome, "_") & model == 1 ~ list(bf_1.s),
-      !str_detect(outcome, "_") & model == 2 ~ list(bf_2.s),
-      !str_detect(outcome, "_") & model == 3 ~ list(bf_3.s),
-      !str_detect(outcome, "_") & model == 4 ~ list(bf_4.s),
+      outcome == "Selfharm" & model == 1 ~ list(bf_1.s),
+      outcome == "Selfharm" & model == 2 ~ list(bf_2.s),
+      outcome == "Selfharm" & model == 3 ~ list(bf_3.s),
+      outcome == "Selfharm" & model == 4 ~ list(bf_4.s),
       TRUE ~ bfrm
     )
   ) %>%
