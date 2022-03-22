@@ -4,9 +4,9 @@
 # Use sbatch --array=1-24 submit.sh to submit
 
 #SBATCH --constraint='cpu_frq:2.90GHz'
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=12
 #SBATCH --mem-per-cpu=3G
-#SBATCH --time=4-00:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --job-name=DWG-Global
 
 module purge
