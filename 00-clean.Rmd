@@ -206,24 +206,20 @@ gwp <- gwp %>%
 
 If the real GWP data was not available above, here we load the synthetic dataset (having first created it).
 
-```{r create-mock-gwp-data}
-#| eval: false
+```{r mock-gwp-data}
 gwp_mock_path <- "data-raw/gwp-MOCK.rds"
-library(synthpop)
-gwp_syn <- gwp %>% 
-  drop_na()
-gwp_syn <- syn(
-  gwp_syn %>% filter(outcome == "Life_satisfaction"), 
-  method = c("", "", "", "", "", "normrank", "normrank"),
-  # visit.sequence = c(1:6, 8, 7),
-  maxfaclevels = 168
+if (dir.exists("data-raw/Gallup") & !file.exists(gwp_mock_path)) {
+  library(synthpop)
+  gwp_syn <- gwp %>% 
+    drop_na()
+  gwp_syn <- syn(
+    gwp_syn, 
+    method = c("", "", "", "", "", "", "normrank", "normrank"),
+    maxfaclevels = 168
   )
-saveRDS(gwp_syn, gwp_mock_path)
-```
+  saveRDS(gwp_syn, gwp_mock_path)
+}
 
-
-```{r}
-gwp_mock_path <- "data-raw/gwp-MOCK.rds"
 # Load if actual data doesn't exist
 if (!dir.exists("data-raw/Gallup")) {
   cat("Using synthetic GWP data.")
