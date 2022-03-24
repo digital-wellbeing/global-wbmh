@@ -217,6 +217,7 @@ if (dir.exists("data-raw/Gallup") & !file.exists(gwp_mock_path)) {
     method = c("", "", "", "", "", "", "normrank", "normrank"),
     maxfaclevels = 168
   )
+  gwp_syn <- tibble(gwp_syn$syn)
   saveRDS(gwp_syn, gwp_mock_path)
 }
 
