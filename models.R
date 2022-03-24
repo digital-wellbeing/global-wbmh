@@ -9,9 +9,9 @@ cat("\nFitting row\n", cmdargs)
 # ---- setup ---------------------------------------------------------------
 
 options(tidyverse.quiet = TRUE)
+library(tidyverse)
 library(cmdstanr)
 library(brms)
-library(tidyverse)
 
 # MCMC settings
 (ncores <- min(parallel::detectCores(logical = FALSE), 12))
@@ -21,10 +21,10 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = min(ncores %/% nchains, 3),
-  iter = 2300,
-  warmup = 1150,
+  iter = 2200,
+  warmup = 1100,
   refresh = 100,
-  adapt_delta = .93,
+  adapt_delta = .94,
   max_treedepth = 10
 )
 
