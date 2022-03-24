@@ -21,10 +21,10 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = min(ncores %/% nchains, 3),
-  iter = 2000,
-  warmup = 1000,
+  iter = 2300,
+  warmup = 1150,
   refresh = 100,
-  adapt_delta = .925,
+  adapt_delta = .93,
   max_treedepth = 10
 )
 
@@ -55,7 +55,7 @@ bf_itu <- bf(
 )
 
 bf_val <- bf(
-  val | se(se, sigma = TRUE) ~
+  val | se(se, sigma = TRUE) + subset(!is.na(val)) ~
     year * sex +
     (year * sex | c | country) +
     (year * sex | r | region) +
@@ -69,7 +69,7 @@ bf_1 <- bf_itu + bf_val + set_rescor(FALSE)
 
 # Simplified model for self-harm
 bf_val.s <- bf(
-  val | se(se, sigma = TRUE) ~
+  val | se(se, sigma = TRUE) + subset(!is.na(val)) ~
     year * sex +
     (year * sex | c | country) +
     (year * sex | r | region) +
@@ -136,13 +136,14 @@ fits <- fits %>%
   crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
 
 # Simplify models for mental health outcomes
+MH <- c("Anxiety", "Depression", "Selfharm")
 fits <- fits %>%
   mutate(
     bfrm = case_when(
-      outcome == "Selfharm" & model == 1 ~ list(bf_1.s),
-      outcome == "Selfharm" & model == 2 ~ list(bf_2.s),
-      outcome == "Selfharm" & model == 3 ~ list(bf_3.s),
-      outcome == "Selfharm" & model == 4 ~ list(bf_4.s),
+      outcome %in% MH & model == 1 ~ list(bf_1.s),
+      outcome %in% MH & model == 2 ~ list(bf_2.s),
+      outcome %in% MH & model == 3 ~ list(bf_3.s),
+      outcome %in% MH & model == 4 ~ list(bf_4.s),
       TRUE ~ bfrm
     )
   ) %>%
