@@ -130,6 +130,9 @@ gwp <- gwp %>%
 
 # There is one 13 year old which resulted in a NA and we drop it
 gwp <- drop_na(gwp, age)
+
+# Some sex values are missing, drop those
+gwp <- drop_na(gwp, sex)
 ```
 
 Instead of working with the person-level scale scores, we aggregate the data to means and standard errors for each cell as defined by the predictors (country, year, age, sex). Because we treat outcomes as normal this greatly simplifies and speeds up the computations without affecting the results, and also makes the data format concordant with the GBD data.
