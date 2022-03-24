@@ -20,12 +20,12 @@ options(brms.backend = "cmdstanr")
 hmc <- list(
   chains = nchains,
   cores = nchains,
-  threads = min(ncores %/% nchains, 2),
-  iter = 2200,
-  warmup = 1100,
+  threads = min(ncores %/% nchains, 3),
+  iter = 2000,
+  warmup = 1000,
   refresh = 100,
-  adapt_delta = .95,
-  max_treedepth = 12
+  adapt_delta = .925,
+  max_treedepth = 10
 )
 
 # Create directory for intermediate files
