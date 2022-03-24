@@ -55,9 +55,9 @@ Here we import the relevant variables from Gallup's SPSS files and then
 -   Use appropriate coding schemes (e.g. 0: no; 1: yes)
 -   Calculate scale scores (means over items)
 -   Rescale outcomes to proportions (0 - 1)
--   Subset the data to 15 to 24 year olds
--   Create age-categories in line with GBD data
+-   Create age categories in line with GBD data
 -   Drop one 13 year old as this data should only have people 15 and older
+-   Exclude people older than 89
 
 ```{r gallup-clean}
 # First liberate the data from the slow SPSS file and save to disk
@@ -88,6 +88,7 @@ if (!file.exists(gwp_path)) {
   gwp <- read_rds(gwp_path)
 }
 
+# Rename and recode variables
 gwp <- gwp %>%
   clean_names() %>%
   transmute(
@@ -192,15 +193,28 @@ gwp <- gwp %>%
   select(-country_harmonised)
 ```
 
-We then load the synthetic GWP dataset if the real data was not found. This is just a list of the countries, years and demographics in the actual data, with gaussian noise for the outcomes' mean and SE values.
+### Synthetic GWP data
+
+If the real GWP data was not available above, here we load the synthetic dataset (having first created it).
+
+```{r create-mock-gwp-data}
+#| eval: false
+gwp_mock_path <- "data-raw/gwp-MOCK.rds"
+library(synthpop)
+gwp_syn <- gwp %>% 
+  drop_na()
+gwp_syn <- syn(
+  gwp_syn %>% filter(outcome == "Life_satisfaction"), 
+  method = c("", "", "", "", "", "normrank", "normrank"),
+  # visit.sequence = c(1:6, 8, 7),
+  maxfaclevels = 168
+  )
+saveRDS(gwp_syn, gwp_mock_path)
+```
+
 
 ```{r}
-# Create if doesn't exist
 gwp_mock_path <- "data-raw/gwp-MOCK.rds"
-if (!file.exists(gwp_mock_path)) {
-  set.seed(101010)
-  # TODO
-}
 # Load if actual data doesn't exist
 if (!dir.exists("data-raw/Gallup")) {
   cat("Using synthetic GWP data.")
