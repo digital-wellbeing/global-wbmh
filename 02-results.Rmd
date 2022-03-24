@@ -1,0 +1,876 @@
+# Main results
+
+```{r setup}
+#| cache: false
+# Packages
+library(tidyverse)
+library(scales)
+library(kableExtra)
+library(ggstance)
+library(brms)
+library(tidybayes)
+library(ggdist)
+library(memoise)
+library(cachem)
+library(posterior)
+library(ggh4x)
+library(parameters)
+library(emmeans)
+library(patchwork)
+library(multidplyr)
+
+cluster <- new_cluster(3)
+
+cd <- cache_disk("memoise_cache", max_size = Inf)
+
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+
+fits <- tibble(outcome = oo) %>%
+  mutate(outcome = factor(outcome, levels = oo))
+
+dat <- readRDS("data/data-all.rds")
+```
+
+We then turn to the third research question, to what extent are the changes in well-being, and associations between internet adoption and well-being different between the different demographic groups within adolescents? To answer, Models 1 and 2 also included age and sex as moderators of the trends and associations. In this section, we present results based on the moderated effects.
+
+## Time courses
+
+This figure shows the time courses of each of the six outcome variables. Panels by outcome (rows) and region (columns; including World). Each panel shows the time course by all ages and sex, and on average across ages. So we need to calculate four kinds of contrasts: sex\*age | world, sex | world, sex\*age | region, sex | region.
+
+Calculate contrast by sex at the world level.
+
+```{r}
+#' Get contrast at average level (no random effects)
+#'
+#' @param outcome Life_satisfaction etc.
+#' @param h Strings representing hypotheses (brm::hypothesis())
+#' @param model 1, 2, 3, or 4
+get_hyp_avg <- function(outcome, h, model) {
+  fit <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  hypothesis(fit, h)$hypothesis
+}
+get_hyp_avg <- memoise(get_hyp_avg, cache = cd)
+
+h_timecourses <- c(
+  Slope_Male = "val_year + val_year:sex1 * -1 = 0",
+  Slope_Female = "val_year + val_year:sex1 * 1 = 0"
+)
+
+cluster_library(cluster, c("brms", "purrr", "stringr"))
+cluster_copy(cluster, c("get_hyp_avg", "h_timecourses"))
+
+timecourses_world_average <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_avg(.x, h = h_timecourses, model = "1")
+    )
+  ) %>% 
+  collect()
+  
+timecourses_world_average %>% 
+  unnest(out)
+```
+
+And then for each sex*age at the world level.
+
+```{r}
+#' Get contrast for each age
+#'
+#' @param outcome Life_satisfaction etc
+#' @param h brms hypothesis
+#' @param model 1,2,3, or 4
+get_hyp_age <- function(outcome, h, model) {
+  fit <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  hypothesis(fit, h, scope = "coef", group = "age")$hypothesis
+}
+get_hyp_age <- memoise(get_hyp_age, cache = cd)
+cluster_copy(cluster, "get_hyp_age")
+
+timecourses_world_age <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_age(.x, h = h_timecourses, model = "1")
+    )
+  ) %>% 
+  collect()
+```
+
+Combine these to one and plot
+
+```{r}
+bind_rows(
+  timecourses_world_age %>% 
+    unnest(out),
+  timecourses_world_average %>% 
+    unnest(out) %>% 
+    mutate(Group = "Average")
+) %>% 
+  ungroup() %>% 
+  mutate(Group = fct_relevel(Group, "Average", "10 to 14")) %>% 
+  select(outcome:CI.Upper) %>% 
+  separate(Hypothesis, c("Parameter", "Sex")) %>% 
+  mutate(s = sign(CI.Lower) == sign(CI.Upper)) %>% 
+  ggplot(aes(Group, Estimate, ymin = CI.Lower, ymax = CI.Upper, fill = Sex, col = Sex, group = Sex)) +
+  scale_color_bright() +
+  scale_fill_bright() +
+  scale_shape_manual(values = c(21, 19), guide = NULL) +
+  scale_y_continuous(
+    breaks = extended_breaks(),
+    # Effect of 10%
+    labels = ~percent(./1000), 
+    expand = expansion(.4)
+  ) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_ribbon(
+    data = . %>% filter(Group != "Average"),
+    aes(), 
+    alpha = .2, col = NA
+  ) +
+  geom_line(
+    data = . %>% filter(Group != "Average"),
+    aes(group = Sex),
+    size = .6
+  ) +
+  geom_pointrange(
+    data = . %>% filter(Group == "Average"),
+    position = position_dodge(.75),
+    size = .4, fatten = 2.5
+  ) +
+  facet_wrap(
+    "outcome", scales = "free_y", nrow = 2,
+    labeller = as_labeller(~str_replace(., "_", " "))) +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+```
+
+And for all regions too. 
+
+First we calculate the contrast by sex for each region.
+
+```{r}
+get_region_timecourse_avg <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-1.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex) %>% 
+    # Note 1 for 10 year change
+    crossing(year = c(0, 1), se = 0, itu = TRUE) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (year*sex | region),
+      resp = "val",
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = year, values_from = .epred) %>% 
+    mutate(delta = `1` - `0`) %>% 
+    select(region, sex, .draw, delta) %>% 
+    group_by(region, sex) %>% 
+    mean_qi(delta)
+}
+get_region_timecourse_avg <- memoise(
+  get_region_timecourse_avg, cache = cd
+)
+
+cluster_copy(cluster, "get_region_timecourse_avg")
+cluster_library(cluster, c("dplyr", "tidyr", "tidybayes"))
+timecourses_region_average <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_region_timecourse_avg)) %>% 
+  collect()
+timecourses_region_average %>% 
+  unnest(out)
+```
+
+Then we calculate the contrasts for each sex*age for each region.
+
+```{r}
+get_region_timecourse_age <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-1.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex, age) %>% 
+    # Note 1 for decade change
+    crossing(year = c(0, 1), se = 0, itu = TRUE) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (year*sex | age) + 
+        (year*sex | region) + (year*sex | age:region),
+      resp = "val",
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = year, values_from = .epred) %>% 
+    mutate(delta = `1` - `0`) %>% 
+    select(region, sex, age, .draw, delta) %>% 
+    group_by(region, sex, age) %>% 
+    mean_qi(delta)
+}
+get_region_timecourse_age <- memoise(
+  get_region_timecourse_age, cache = cd
+)
+
+cluster_copy(cluster, "get_region_timecourse_age")
+timecourses_region_age <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_region_timecourse_age)) %>% 
+  collect()
+```
+
+Combine these with world level estimates and plot
+
+```{r}
+timecourses_world <- bind_rows(
+  timecourses_world_age %>% 
+    unnest(out),
+  timecourses_world_average %>% 
+    unnest(out) %>% 
+    mutate(Group = "Average")
+) %>% 
+  ungroup() %>% 
+  separate(Hypothesis, c("Parameter", "sex")) %>% 
+  select(
+    outcome,
+    age = Group,
+    sex,
+    delta = Estimate,
+    .lower = CI.Lower,
+    .upper = CI.Upper,
+  ) %>% 
+  mutate(region = "World")
+
+x <- sort(unique(timecourses_world$age))
+x2 <- as.character(x)
+x2[str_detect(x2, "5 ")] <- ""
+
+bind_rows(
+  timecourses_region_age %>% 
+    unnest(out),
+  timecourses_region_average %>% 
+    unnest(out) %>% 
+    mutate(age = "Average")
+) %>% 
+  ungroup() %>% 
+  bind_rows(timecourses_world) %>% 
+  mutate(age = fct_relevel(age, "Average", "10 to 14")) %>% 
+  mutate(sex = factor(sex, levels = c("Female", "Male"))) %>% 
+  arrange(sex) %>% 
+  select(outcome:.upper) %>% 
+  mutate(s = sign(.lower) == sign(.upper)) %>% 
+  ggplot(
+    aes(
+      age, delta, 
+      ymin = .lower, ymax = .upper, 
+      fill = sex, col = sex, group = sex
+    )
+  ) +
+  scale_color_bright() +
+  scale_fill_bright() +
+  scale_shape_manual(values = c(21, 19), guide = NULL) +
+  scale_x_discrete(
+    breaks = x,
+    labels = x2,
+    expand = expansion(c(0.02, 0.05))
+  ) +
+  scale_y_continuous(
+    "Estimated linear change per decade",
+    breaks = extended_breaks(),
+    labels = ~percent(./100),
+    expand = expansion(.1)
+  ) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_ribbon(
+    data = . %>% filter(age != "Average"),
+    aes(), 
+    alpha = .15, col = NA
+  ) +
+  geom_line(
+    data = . %>% filter(age != "Average"),
+    aes(group = sex),
+    size = .4
+  ) +
+  geom_pointrange(
+    data = . %>% filter(age == "Average"),
+    position = position_dodge(.9),
+    size = .3, fatten = 0.1
+  ) +
+  facet_grid(
+    outcome~region, scales = "free_y", 
+    labeller = as_labeller(~str_replace(., "_", "\n"))) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+agg_png(
+  "figures/Fig-timecourses-demographics.png", 
+  width = W, height = W*0.6, units = "in", res = 400
+)
+last_plot()
+dev.off()
+```
+
+## Associations
+
+### Internet
+
+Calculate contrast by sex at the world level.
+
+```{r}
+h_internet_associations <- c(
+  Slope_Male = "i1_cw + i1_cw:sex1 * -1 = 0",
+  Slope_Female = "i1_cw + i1_cw:sex1 * 1 = 0"
+)
+cluster_copy(cluster, "h_internet_associations")
+
+internet_associations_world_average <- fits %>% 
+  slice(1:3) %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_avg(.x, h = h_internet_associations, model = "2")
+    )
+  ) %>% 
+  collect()
+  
+internet_associations_world_average %>% 
+  unnest(out)
+```
+
+And then for each sex*age at the world level.
+
+```{r}
+internet_associations_world_age <- fits %>% 
+  slice(1:3) %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_age(.x, h = h_internet_associations, model = "2")
+    )
+  ) %>% 
+  collect()
+internet_associations_world_age %>% 
+  unnest(out)
+```
+
+And for all regions too. 
+
+First we calculate the contrast by sex for each region.
+
+```{r}
+get_internet_region_association_avg <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-2.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex) %>% 
+    # Note .1 for 10% change
+    crossing(i1_cw = c(0, .1), se = 0, year = 0) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (i1_cw*sex | region),
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = i1_cw, values_from = .epred) %>% 
+    mutate(delta = `0.1` - `0`) %>% 
+    select(region, sex, .draw, delta) %>% 
+    group_by(region, sex) %>% 
+    mean_qi(delta)
+}
+get_internet_region_association_avg <- memoise(
+  get_internet_region_association_avg, cache = cd
+)
+
+cluster_copy(cluster, "get_internet_region_association_avg")
+cluster_library(cluster, c("dplyr", "tidyr", "purrr", "stringr", "tidybayes"))
+internet_associations_region_average <- fits %>% 
+  slice(1:3) %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_internet_region_association_avg)) %>% 
+  collect()
+internet_associations_region_average %>% 
+  unnest(out)
+```
+
+#### Demographics
+
+Then we calculate the contrasts for each sex*age for each region.
+
+```{r}
+get_internet_region_association_age <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-2.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex, age) %>% 
+    # Note .1 for 10% change
+    crossing(i1_cw = c(0, .1), se = 0, year = 0) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (i1_cw*sex | age) + 
+        (i1_cw*sex | region) + (i1_cw*sex | age:region),
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = i1_cw, values_from = .epred) %>% 
+    mutate(delta = `0.1` - `0`) %>% 
+    select(region, sex, age, .draw, delta) %>% 
+    group_by(region, sex, age) %>% 
+    mean_qi(delta)
+}
+get_internet_region_association_age <- memoise(
+  get_internet_region_association_age, cache = cd
+)
+
+cluster_copy(cluster, "get_internet_region_association_age")
+internet_associations_region_age <- fits %>% 
+  slice(1:3) %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_internet_region_association_age)) %>% 
+  collect()
+```
+
+Combine these with world level estimates and plot
+
+```{r}
+internet_associations_world <- bind_rows(
+  internet_associations_world_age %>% 
+    unnest(out),
+  internet_associations_world_average %>% 
+    unnest(out) %>% 
+    mutate(Group = "Average")
+) %>% 
+  ungroup() %>% 
+  separate(Hypothesis, c("Parameter", "sex")) %>% 
+  mutate(
+    # Convert to effect of 10% change in internet/mobile
+    delta = Estimate/10,
+    .lower = CI.Lower/10,
+    .upper = CI.Upper/10
+  ) %>% 
+  select(
+    outcome,
+    age = Group,
+    sex,
+    delta,
+    .lower,
+    .upper,
+  ) %>% 
+  mutate(region = "World")
+
+internet_associations <- bind_rows(
+  internet_associations_region_age %>% 
+    unnest(out),
+  internet_associations_region_average %>% 
+    unnest(out) %>% 
+    mutate(age = "Average")
+) %>% 
+  ungroup() %>% 
+  bind_rows(internet_associations_world) %>% 
+  mutate(age = fct_relevel(age, "Average", "10 to 14")) %>% 
+  mutate(sex = factor(sex, levels = c("Female", "Male"))) %>% 
+  arrange(sex) %>% 
+  select(outcome:.upper) %>% 
+  mutate(s = sign(.lower) == sign(.upper))
+internet_associations %>%   
+  ggplot(aes(
+    age, delta, 
+    ymin = .lower, ymax = .upper, 
+    fill = sex, col = sex, group = sex)
+  ) +
+  scale_color_bright() +
+  scale_fill_bright() +
+  scale_shape_manual(values = c(21, 19), guide = NULL) +
+  scale_x_discrete(
+    breaks = x,
+    labels = x2,
+    expand = expansion(c(0.02, 0.06))
+  ) +
+  scale_y_continuous(
+    "Conditional effect of 10% increase\nin per capita internet users",
+    breaks = extended_breaks(),
+    labels = ~percent(./100),
+    expand = expansion(c(.25, .25))
+  ) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_ribbon(
+    data = . %>% filter(age != "Average"),
+    aes(), 
+    alpha = .15, col = NA
+  ) +
+  geom_line(
+    data = . %>% filter(age != "Average"),
+    aes(group = sex),
+    size = .4
+  ) +
+  geom_pointrange(
+    data = . %>% filter(age == "Average"),
+    position = position_dodge(.9),
+    size = .2, fatten = 1.25
+  ) +
+  facet_grid(
+    outcome~region, scales = "free_y", drop = FALSE,
+    labeller = as_labeller(~str_replace(., "_", "\n"))) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+agg_png(
+  "figures/Fig-associations-internet-demographics.png", 
+  width = W, height = W*0.6, units = "in", res = 400
+)
+last_plot()
+dev.off()
+```
+
+#### Compare ages
+
+We then compared, for selfharm, the youngest age group's association to all other age group's associations.
+
+```{r}
+fit_selfharm <- readRDS("models/brm-Selfharm-3.rds")
+h <- hypothesis(fit_selfharm, "m1_cw = 0", scope = "coef", group = "age")
+s <- tibble(h$samples)
+hypothesis(s, paste0("H1 > H", 2:9))$hypothesis %>% 
+  as.data.frame() %>% 
+  kbl(digits = 4) %>% 
+  kable_custom()
+```
+
+
+#### Forest plot
+
+```{r}
+library(ggstance)
+internet_associations %>% 
+  filter(age == "Average") %>% 
+  ggplot(aes(delta, region, col = sex)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_pointrangeh(
+    aes(xmin = .lower, xmax = .upper),
+    position = position_dodge2v(.3)
+  ) +
+  facet_wrap("outcome", scales = "free_x", ncol = 3)
+```
+
+### Mobile
+
+This figure shows mobile --> outcome associations. Panels by outcome (rows) and region (columns; including World). Each panel shows the association by all ages and sex, and on average across ages. So we need to calculate four kinds of contrasts: sex\*age | world, sex | world, sex\*age | region, sex | region.
+
+Calculate contrast by sex at the world level.
+
+```{r}
+get_hyp_avg <- function(outcome, h, model) {
+  fit <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  hypothesis(fit, h)$hypothesis
+}
+get_hyp_avg <- memoise(get_hyp_avg, cache = cd)
+
+h_mobile_associations <- c(
+  # Intercept_Male = "Intercept + sex1 * -1 = 0",
+  # Intercept_Female = "Intercept + sex1 * 1 = 0",
+  Slope_Male = "m1_cw + m1_cw:sex1 * -1 = 0",
+  Slope_Female = "m1_cw + m1_cw:sex1 * 1 = 0"
+)
+
+cluster_library(cluster, c("brms", "purrr", "stringr"))
+cluster_copy(cluster, c("get_hyp_avg", "h_mobile_associations"))
+
+mobile_associations_world_average <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_avg(.x, h = h_mobile_associations, model = "3")
+    )
+  ) %>% 
+  collect()
+  
+mobile_associations_world_average %>% 
+  unnest(out)
+```
+
+And then for each sex*age at the world level.
+
+```{r}
+get_hyp_age <- function(outcome, h, model) {
+  fit <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  hypothesis(fit, h, scope = "coef", group = "age")$hypothesis
+}
+get_hyp_age <- memoise(get_hyp_age, cache = cd)
+cluster_copy(cluster, "get_hyp_age")
+
+mobile_associations_world_age <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(
+    out = map(
+      outcome,
+      ~get_hyp_age(.x, h = h_mobile_associations, model = "3")
+    )
+  ) %>% 
+  collect()
+```
+
+Combine these to one and plot
+
+```{r}
+bind_rows(
+  mobile_associations_world_age %>% 
+    unnest(out),
+  mobile_associations_world_average %>% 
+    unnest(out) %>% 
+    mutate(Group = "Average")
+) %>% 
+  ungroup() %>% 
+  mutate(Group = fct_relevel(Group, "Average", "10 to 14")) %>% 
+  select(outcome:CI.Upper) %>% 
+  separate(Hypothesis, c("Parameter", "Sex")) %>% 
+  mutate(s = sign(CI.Lower) == sign(CI.Upper)) %>% 
+  ggplot(aes(Group, Estimate, ymin = CI.Lower, ymax = CI.Upper, fill = Sex, col = Sex, group = Sex)) +
+  scale_color_bright() +
+  scale_fill_bright() +
+  scale_shape_manual(values = c(21, 19), guide = NULL) +
+  scale_y_continuous(
+    breaks = extended_breaks(),
+    # Effect of 10%
+    labels = ~percent(./1000), 
+    expand = expansion(.4)
+  ) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_ribbon(
+    data = . %>% filter(Group != "Average"),
+    aes(), 
+    alpha = .2, col = NA
+  ) +
+  geom_line(
+    data = . %>% filter(Group != "Average"),
+    aes(group = Sex),
+    size = .6
+  ) +
+  geom_pointrange(
+    data = . %>% filter(Group == "Average"),
+    position = position_dodge(.75),
+    size = .4, fatten = 2.5
+  ) +
+  facet_wrap(
+    "outcome", scales = "free_y", nrow = 2,
+    labeller = as_labeller(~str_replace(., "_", " "))) +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+```
+
+And for all regions too. 
+
+First we calculate the contrast by sex for each region.
+
+```{r}
+get_region_association_avg <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-3.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex) %>% 
+    # Note .1 for 10% change
+    crossing(m1_cw = c(0, .1), se = 0, year = 0) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (m1_cw*sex | region),
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = m1_cw, values_from = .epred) %>% 
+    mutate(delta = `0.1` - `0`) %>% 
+    select(region, sex, .draw, delta) %>% 
+    group_by(region, sex) %>% 
+    mean_qi(delta)
+}
+get_region_association_avg <- memoise(
+  get_region_association_avg, cache = cd
+)
+
+cluster_copy(cluster, "get_region_association_avg")
+cluster_library(cluster, c("dplyr", "tidyr", "purrr", "stringr", "tidybayes"))
+mobile_associations_region_average <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_region_association_avg)) %>% 
+  collect()
+mobile_associations_region_average %>% 
+  unnest(out)
+```
+
+Then we calculate the contrasts for each sex*age for each region.
+
+```{r}
+get_region_association_age <- function(outcome) {
+  x <- readRDS(str_glue("models/brm-{outcome}-3.rds"))
+  tmp <- x$data %>% 
+    distinct(region, sex, age) %>% 
+    # Note .1 for 10% change
+    crossing(m1_cw = c(0, .1), se = 0, year = 0) %>% 
+    add_epred_draws(
+      x,
+      re_formula = ~ (m1_cw*sex | age) + 
+        (m1_cw*sex | region) + (m1_cw*sex | age:region),
+      ndraws = 1000
+    ) %>% 
+    ungroup()
+  tmp %>% 
+    select(-.row, -se, -.chain, -.iteration) %>% 
+    pivot_wider(names_from = m1_cw, values_from = .epred) %>% 
+    mutate(delta = `0.1` - `0`) %>% 
+    select(region, sex, age, .draw, delta) %>% 
+    group_by(region, sex, age) %>% 
+    mean_qi(delta)
+}
+get_region_association_age <- memoise(
+  get_region_association_age, cache = cd
+)
+
+cluster_library(cluster, c("dplyr", "tidyr", "tidybayes"))
+cluster_copy(cluster, "get_region_association_age")
+mobile_associations_region_age <- fits %>% 
+  group_by(outcome) %>% 
+  partition(cluster) %>% 
+  mutate(out = map(outcome, get_region_association_age)) %>% 
+  collect()
+```
+
+Combine these with world level estimates and plot
+
+```{r}
+mobile_associations_world <- bind_rows(
+  mobile_associations_world_age %>% 
+    unnest(out),
+  mobile_associations_world_average %>% 
+    unnest(out) %>% 
+    mutate(Group = "Average")
+) %>% 
+  ungroup() %>% 
+  separate(Hypothesis, c("Parameter", "sex")) %>% 
+  mutate(
+    # Convert to effect of 10% change in internet/mobile
+    delta = Estimate/10,
+    .lower = CI.Lower/10,
+    .upper = CI.Upper/10
+  ) %>% 
+  select(
+    outcome,
+    age = Group,
+    sex,
+    delta,
+    .lower,
+    .upper,
+  ) %>% 
+  mutate(region = "World")
+
+mobile_associations <- bind_rows(
+  mobile_associations_region_age %>% 
+    unnest(out),
+  mobile_associations_region_average %>% 
+    unnest(out) %>% 
+    mutate(age = "Average")
+) %>% 
+  ungroup() %>% 
+  bind_rows(mobile_associations_world) %>% 
+  mutate(age = fct_relevel(age, "Average", "10 to 14")) %>% 
+  mutate(sex = factor(sex, levels = c("Female", "Male"))) %>% 
+  arrange(sex) %>% 
+  select(outcome:.upper) %>% 
+  mutate(s = sign(.lower) == sign(.upper))
+mobile_associations %>%   
+  ggplot(
+    aes(
+      age, delta, 
+      ymin = .lower, ymax = .upper, 
+      fill = sex, col = sex, group = sex
+    )
+  ) +
+  scale_color_bright() +
+  scale_fill_bright() +
+  scale_shape_manual(values = c(21, 19), guide = NULL) +
+  scale_x_discrete(
+    breaks = x,
+    labels = x2,
+    expand = expansion(c(0.02, 0.06))
+  ) +
+  scale_y_continuous(
+    "Conditional effect of 10% increase\nin per capita mobile broadband subscriptions",
+    breaks = extended_breaks(),
+    labels = ~percent(./100),
+    expand = expansion(.4)
+  ) +
+  geom_hline(yintercept = 0, lty = 2, size = .2) +
+  geom_ribbon(
+    data = . %>% filter(age != "Average"),
+    aes(), 
+    alpha = .15, col = NA
+  ) +
+  geom_line(
+    data = . %>% filter(age != "Average"),
+    aes(group = sex),
+    size = .4
+  ) +
+  geom_pointrange(
+    data = . %>% filter(age == "Average"),
+    position = position_dodge(.9),
+    size = .2, fatten = 1.25
+  ) +
+  facet_grid(
+    outcome~region, scales = "free_y", 
+    labeller = as_labeller(~str_replace(., "_", "\n"))) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  )
+agg_png(
+  "figures/Fig-associations-mobile-demographics.png", 
+  width = W, height = W*0.6, units = "in", res = 400
+)
+last_plot()
+dev.off()
+```
+
+#### Forest plot
+
+```{r}
+mobile_associations %>% 
+  filter(age == "Average") %>% 
+  ggplot(aes(delta, region, col = sex)) +
+  geom_vline(xintercept = 0, lty = 2, size = .2) +
+  geom_pointrangeh(
+    aes(xmin = .lower, xmax = .upper),
+    position = position_dodge2v(.3)
+  ) +
+  facet_wrap("outcome", scales = "free_x", ncol = 3)
+```

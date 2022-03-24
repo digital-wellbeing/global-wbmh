@@ -1,0 +1,427 @@
+# Between-country correlations
+
+```{r}
+# Between-country correlations
+
+library(scales)
+library(memoise)
+library(tidyverse)
+library(kableExtra)
+library(ggtext)
+library(cachem)
+library(bayestestR)
+library(multidplyr)
+library(broom)
+library(brms)
+library(posterior)
+library(ggstance)
+library(ellipse)
+library(ggh4x)
+library(patchwork)
+
+cd <- cache_disk("memoise_cache", max_size = Inf)
+cluster <- new_cluster(3)
+
+dat <- readRDS("data/data-all.rds")
+itu <- readRDS("data/itu.rds")
+
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+fits <- tibble(outcome = oo) %>%
+  mutate(outcome = factor(outcome, levels = oo))
+```
+
+## OLS
+
+```{r}
+# Parameters for delta scatterplots
+delta_ols_i <- itu %>%
+  mutate(year = year - 2010) %>%
+  group_by(region, country) %>%
+  group_modify(~tidy(lm(internet ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  select(country, estimate_internet = estimate)
+delta_ols_m <- itu %>%
+  drop_na(mobile) %>%
+  mutate(year = year - 2010) %>%
+  group_by(region, country) %>%
+  group_modify(~tidy(lm(mobile ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  select(country, estimate_mobile = estimate)
+delta_ols_v <- dat %>%
+  drop_na(val) %>%
+  mutate(year = year - 2010) %>%
+  group_by(region, outcome, country, year) %>%
+  summarise(val = mean(val, na.rm = TRUE)) %>%
+  group_modify(~tidy(lm(val ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  select(country, estimate_val = estimate)
+delta_ols <- left_join(
+  delta_ols_v,
+  delta_ols_i
+) %>%
+  left_join(delta_ols_m) %>%
+  ungroup()
+
+p_delta_ols_internet <- delta_ols %>%
+  ggplot(aes(estimate_internet, estimate_val, col = region)) +
+  scale_color_discreterainbow(
+    name = "Region",
+    labels = ~str_replace(., "_", " ")
+  ) +
+  scale_y_continuous(
+    labels = ~percent(./100, .1)
+  ) +
+  scale_x_continuous(
+    labels = ~percent(., .1)
+  ) +
+  geom_point(
+    shape = 1, size = 1.0, alpha = .75
+  ) +
+  facet_wrap(
+    "outcome",
+    scales = "free_y",
+    nrow = 1,
+    labeller = as_labeller(~str_replace(., "_", " "))
+  ) +
+  theme(
+    aspect.ratio = 1
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(alpha = 1, shape = 16, size = 1.5)
+    )
+  ) +
+  labs(
+    y = expression(Delta~"Outcome"),
+    x = expression(Delta~"Internet users per capita")
+  )
+
+p_delta_ols_mobile <- p_delta_ols_internet +
+  aes(x = estimate_mobile) +
+  labs(
+    x = expression(Delta~"Mobile users per capita")
+  )
+
+# Data for average levels scatterplots
+dat_avg <- dat %>%
+  group_by(outcome, region, country) %>%
+  summarise(
+    internet = mean(internet, na.rm = TRUE),
+    mobile = mean(mobile, na.rm = TRUE),
+    val = mean(val, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+p_means_ols_internet <- dat_avg %>%
+  ggplot(aes(y = val, col = region)) +
+  scale_color_discreterainbow(
+    name = "Region",
+    labels = ~str_replace(., "_", " ")
+  ) +
+  scale_y_continuous(
+    "Mean outcome",
+    labels = ~percent(./100, .1),
+    breaks = extended_breaks()
+  ) +
+  geom_point(
+    shape = 1, size = 1.0, alpha = .75
+  ) +
+  facet_wrap(
+    ~outcome,
+    scales = "free", nrow = 1,
+    labeller = as_labeller(~str_replace(., "_", " ") %>% str_to_title(.))
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(alpha = 1, shape = 16, size = 1.5)
+    )
+  ) +
+  theme(
+    aspect.ratio = 1
+  )
+
+p_means_ols_internet <- p_means_ols_internet +
+  aes(x = internet) +
+  scale_x_continuous(
+    "Mean internet users per capita",
+    breaks = seq(0, 1, by = .25),
+    labels = ~percent(.),
+    limits = 0:1
+  )
+p_means_ols_mobile <- p_means_ols_internet +
+  aes(x = mobile) +
+  scale_x_continuous(
+    "Mean mobile internet subscriptions per capita",
+    breaks = seq(0, 1.5, by = .5),
+    labels = ~percent(.),
+    limits = c(0, 1.5)
+  )
+
+(p_means_ols_internet | 
+    p_delta_ols_internet | 
+    p_means_ols_mobile | 
+    p_delta_ols_mobile
+) +
+  plot_layout(nrow = 4, guides = "collect")
+
+agg_png(
+  "figures/Fig-country-correlations-OLS.png",
+  width = W, height = W*0.8, units = "in", res = 400
+)
+last_plot()
+dev.off()
+
+# Coefficient plot
+means_ols_cors <- dat_avg %>%
+  group_by(outcome) %>%
+  group_modify(
+    ~tidy(lm(scale(val) ~ scale(internet), data = .), conf.int = TRUE)
+  ) %>%
+  filter(term != "(Intercept)")
+delta_ols_cors <- delta_ols %>%
+  group_by(outcome) %>%
+  group_modify(
+    ~tidy(lm(scale(estimate_val) ~ scale(estimate_internet), data = .), conf.int = TRUE)
+  ) %>%
+  filter(term != "(Intercept)")
+cor_pars_ols <- bind_rows(
+  "Means" = means_ols_cors,
+  "Deltas" = delta_ols_cors,
+  .id = "type"
+)
+cor_pars_ols %>%
+  mutate(type = fct_rev(type)) %>%
+  mutate(outcome = fct_rev(factor(outcome, levels = oo))) %>%
+  ggplot(aes(estimate, outcome)) +
+  geom_vline(xintercept = 0, lty = 2, size = .25) +
+  geom_pointrangeh(aes(xmin = conf.low, xmax = conf.high)) +
+  facet_wrap("type") +
+  labs(x = "Correlation") +
+  theme(axis.title.y = element_blank())
+```
+
+## Model based
+
+### Correlation parameters
+
+```{r}
+get_cor_pars <- function(outcome, predictor, model) {
+  x <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  as_draws_df(
+    x,
+    variable = c(
+      str_glue("b_{predictor}_Intercept"),
+      "b_val_Intercept",
+      str_glue("b_{predictor}_year"),
+      "b_val_year",
+      str_glue("sd_country__{predictor}_Intercept"),
+      "sd_country__val_Intercept",
+      str_glue("sd_country__{predictor}_year"),
+      "sd_country__val_year",
+      str_glue("cor_country__{predictor}_year__val_year"),
+      str_glue("cor_country__{predictor}_Intercept__val_Intercept")
+    )
+  )
+}
+get_cor_pars <- memoise(get_cor_pars, cache = cd)
+
+cor_pars_brm_internet <- fits %>%
+  mutate(out = map(outcome, ~get_cor_pars(.x, "internet", "1")))
+cor_pars_brm_mobile <- fits %>%
+  mutate(out = map(outcome, ~get_cor_pars(.x, "mobile", "4")))
+
+cor_pars_brm <- bind_rows(
+  "internet" = cor_pars_brm_internet,
+  "mobile" = cor_pars_brm_mobile,
+  .id = "type"
+) %>% 
+  mutate(
+    out = map(
+      out,
+      ~summarize_draws(., mean, ~quantile2(., probs = c(.025, .975))))
+  ) %>%
+  unnest(out) %>% 
+  filter(str_detect(variable, "cor_country")) %>% 
+  mutate(variable = if_else(str_detect(variable, "Intercept"), "Intercepts", "Slopes")) %>% 
+  mutate(outcome = factor(outcome, levels = oo))
+cor_pars_brm %>%   
+  ggplot(aes(mean, outcome, col = type)) +
+  geom_vline(xintercept = 0, lty = 2, size = .25) +
+  geom_pointrangeh(
+    aes(xmin = q2.5, xmax = q97.5),
+    position = position_dodge2v(.25)
+  ) +
+  facet_wrap("variable") +
+  labs(x = "Correlation") +
+  theme(axis.title.y = element_blank())
+cor_pars_brm %>% 
+  mutate(across(where(is.numeric), ~number(., .01))) %>% 
+  transmute(
+    type, outcome, variable,
+    r = str_glue("{mean} [{q2.5}, {q97.5}]")
+  ) %>% 
+  pivot_wider(names_from = variable, values_from = r) %>% 
+  arrange(outcome, type) %>% 
+  kbl() %>% 
+  kable_custom()
+```
+
+### Internet
+
+#### Draw scatterplots
+
+
+```{r}
+get_country_coefs <- function(outcome, predictor, model) {
+  x <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  x_country <- coef(x)$country[
+    ,,c(
+      str_glue("{predictor}_Intercept"), 
+      "val_Intercept", 
+      str_glue("{predictor}_year"), 
+      "val_year"
+      )
+    ] %>%
+    as.data.frame() %>% 
+    rownames_to_column("country") %>% 
+    tibble() %>% 
+    select(country, contains("Estimate"))
+  # Below adds region ranefs to country coefs to produce predictions
+  x_region <- ranef(x)$region[
+    ,,c(
+      str_glue("{predictor}_Intercept"), 
+      "val_Intercept", 
+      str_glue("{predictor}_year"), 
+      "val_year"
+      )
+    ] %>%
+    as.data.frame() %>%
+    rownames_to_column("region") %>%
+    tibble() %>%
+    select(region, contains("Estimate"))
+  x_country %>%
+    left_join(distinct(dat, region, country)) %>%
+    left_join(x_region, by = c("region")) %>%
+    # Rename X for function
+    rename_with(~str_replace(., "internet|mobile", "x")) %>% 
+    transmute(
+      country, region,
+      Estimate.x_Intercept = Estimate.x_Intercept.x + Estimate.x_Intercept.y,
+      Estimate.x_year = Estimate.x_year.x + Estimate.x_year.y,
+      Estimate.val_Intercept = Estimate.val_Intercept.x + Estimate.val_Intercept.y,
+      Estimate.val_year = Estimate.val_year.x + Estimate.val_year.y,
+    )
+}
+get_country_coefs <- memoise(get_country_coefs, cache = cd)
+brm_country_coefs_internet <- fits %>%
+  mutate(out = map(outcome, ~get_country_coefs(.x, "internet", "1"))) %>% 
+  unnest(out)
+
+p_means_brm_internet <- brm_country_coefs_internet %>%
+  ggplot(aes(Estimate.x_Intercept, Estimate.val_Intercept, col = region)) +
+  scale_color_discreterainbow(
+    name = "Region",
+    labels = ~str_replace(., "_", " ")
+  ) +
+  geom_point(
+    shape = 1, size = 1.0, alpha = .75
+  ) +
+  scale_y_continuous(
+    labels = ~percent(./100, .1)
+  ) +
+  facet_wrap(
+    ~outcome,
+    scales = "free", nrow = 1,
+    labeller = as_labeller(~str_replace(., "_", " "))
+  ) +
+  theme(
+    aspect.ratio = 1
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(alpha = 1, shape = 16, size = 1.5)
+    )
+  ) +
+  labs(x = "Internet users per capita (logits)", y = "Outcome")
+
+p_delta_brm_internet <- p_means_brm_internet +
+  aes(Estimate.x_year, Estimate.val_year) +
+  labs(
+    y = "Change in outcome",
+    x = "Change in internet users per capita (logits)"
+  )
+```
+
+### Mobile
+
+#### Draw scatterplots
+
+```{r}
+brm_country_coefs_mobile <- fits %>%
+  mutate(out = map(outcome, ~get_country_coefs(.x, "mobile", "4"))) %>% 
+  unnest(out)
+
+p_means_brm_mobile <- brm_country_coefs_mobile %>%
+  ggplot(aes(Estimate.x_Intercept, Estimate.val_Intercept, col = region)) +
+  scale_color_discreterainbow(
+    name = "Region",
+    labels = ~str_replace(., "_", " ")
+  ) +
+  scale_x_continuous(
+    labels = ~percent(., 1),
+    breaks = c(-.25, 0, .25, .5, .75, 1)
+  ) +
+  geom_point(
+    shape = 1, size = 1.0, alpha = .75
+  ) +
+  scale_y_continuous(
+    labels = ~percent(./100, .1)
+  ) +
+  facet_wrap(
+    ~outcome,
+    scales = "free", nrow = 1, drop = FALSE,
+    labeller = as_labeller(~str_replace(., "_", " "))
+  ) +
+  theme(
+    aspect.ratio = 1
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(alpha = 1, shape = 16, size = 1.5)
+    )
+  ) +
+  labs(x = "Mobile broadband subscriptions per capita", y = "Outcome")
+
+p_delta_brm_mobile <- p_means_brm_mobile +
+  scale_x_continuous(
+    labels = ~percent(., 1),
+    breaks = extended_breaks(5)
+  ) +
+  aes(Estimate.x_year, Estimate.val_year) +
+  labs(
+    y = "Change in outcome",
+    x = "Change in mobile broadband subscriptions per capita"
+  )
+```
+
+
+```{r}
+(
+  p_means_ols_internet + ggtitle("A") +
+    p_delta_brm_internet + ggtitle("B") +
+  p_means_ols_mobile + ggtitle("C") +
+    p_delta_brm_mobile + coord_cartesian(xlim = c(0, 2)) + ggtitle("D")
+  ) +
+  plot_layout(nrow = 4, guides = "collect") & 
+  theme(legend.position = "bottom")
+
+agg_png(
+  "figures/Fig-country-correlations.png",
+  width = W, height = W*0.9, units = "in", res = 400
+)
+last_plot()
+dev.off()
+```

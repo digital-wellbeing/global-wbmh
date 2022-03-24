@@ -1,0 +1,387 @@
+# Models
+
+```{r setup}
+#| cache: false
+# Packages
+library(tidyverse)
+library(knitr)
+library(posterior)
+library(ragg)
+library(here)
+library(scales)
+library(bayestestR)
+library(kableExtra)
+library(memoise)
+library(cachem)
+library(ggh4x)
+library(cmdstanr)
+library(brms)
+library(multidplyr)
+
+cluster <- new_cluster(3)
+
+cd <- cache_disk("memoise_cache", max_size = Inf)
+```
+
+Here we discuss the models. The models are fitted in `models.R`. We submit that to our local SLURM cluster with `submit.sh`. 
+
+## Model 1
+
+Model 1 is a three-level bayesian multivariate meta-regression model that simultaneously estimates trends over time for the outcome (e.g. Life satisfaction) and internet adoption, with shared covariance matrices over the two outcomes across regions and countries. It also includes sex and the sex by time interaction predictors for the outcomes. The parameters are also treated as random across the age groups, and the age by country, and age by region interactions. We fit the model separately for each outcome. In this model, internet adoption is treated as Beta-distributed and the outcomes are treated as gaussian.
+
+The GBD data are estimates with standard errors, and thus suggest that a model that incorporates the SEs would be appropriate. For this reason, and for reducing computational complexity, we have reshaped the GWP data similarly to aggregates per cell (mean and SE for each country \* year \* sex \* age). The one downside of this modelling strategy is that it does not converge for self-harm. Therefore we estimate the model with SEs for all outcomes except self-harm, where we set the SEs to zero. In addition, for self-harm, we remove the $age:country$ random effects.
+
+We write the model as
+
+$$
+\begin{align}
+y_i &\sim \text{Normal}(\mu^y_i, \sigma^{2}v_i) \\
+
+\mu^y_i &= \alpha^{y}_{0} + \beta^{y}_{0\text{region}[i]} + \gamma^{y}_{0\text{country}[i]} + \delta^{y}_{0\text{age}[i]} + \zeta^{y}_{0\text{age:region}[i]} + \eta^{y}_{0\text{age:country}[i]} \\ &(\alpha^{y}_{1} + \beta^{y}_{1\text{region}[i]} + \gamma^{y}_{1\text{country}[i]} + \delta^{y}_{1\text{age}[i]} + \zeta^{y}_{1\text{age:region}[i]} + \eta^{y}_{1\text{age:country}[i]})\text{Time}_i + \\
+&(\alpha^{y}_{2} + \beta^{y}_{2\text{region}[i]} + \gamma^{y}_{2\text{country}[i]} + \delta^{y}_{2\text{age}[i]} + \zeta^{y}_{2\text{age:region}[i]} + \eta^{y}_{2\text{age:country}[i]})\text{Sex}_i + \\
+&(\alpha^{y}_{3} + \beta^{y}_{3\text{region}[i]} + \gamma^{y}_{3\text{country}[i]} + \delta^{y}_{3\text{age}[i]} + \zeta^{y}_{3\text{age:region}[i]} + \eta^{y}_{3\text{age:country}[i]})\text{Sex}_i \times \text{Time}_i \\ \\
+
+x_i &\sim \text{Beta}(\mu^x_i, \phi) \\ 
+\text{logit}(\mu^x_i) &= \alpha^{x}_{0} + \beta^{x}_{0\text{region}[i]} + \gamma^{x}_{0\text{country}[i]} + (\alpha^x_{1} + \beta^{x}_{1\text{region}[i]} + \gamma^{x}_{1\text{country}[i]})\text{Time}_i  \\ \\
+\end{align}
+$$
+
+$$
+\begin{align}
+
+\left[\begin{array}{c}
+\beta^y_{0\text{region}} \\ \beta^y_{1\text{region}}\\ 
+\beta^y_{2\text{region}} \\ \beta^y_{3\text{region}} \\
+\beta^x_{0\text{region}} \\ \beta^x_{1\text{region}}
+\end{array}\right] 
+&\sim MVN(
+\mathbf{0},
+\Sigma^\text{region}),
+
+\left[\begin{array}{c}
+\gamma^y_{0\text{country}} \\ \gamma^y_{1\text{country}} \\ 
+\gamma^y_{2\text{country}} \\ \gamma^y_{3\text{country}} \\
+\gamma^x_{2\text{country}} \\ \gamma^x_{3\text{country}}
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{country}),
+
+\left[\begin{array}{c}
+\delta^y_{0\text{age}} \\ \delta^y_{1\text{age}} \\ 
+\delta^y_{2\text{age}} \\ \delta^y_{3\text{age}}
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{age}), \\
+
+
+\left[\begin{array}{c}
+\zeta^y_{0\text{age:region}} \\ \zeta^y_{1\text{age:region}} \\ 
+\zeta^y_{2\text{age:region}} \\ \zeta^y_{3\text{age:region}}
+\end{array}\right] 
+&\sim MVN(
+\mathbf{0},
+\Sigma^\text{age:region}),
+
+\left[\begin{array}{c}
+\eta^y_{0\text{age:country}} \\ \eta^y_{1\text{age:country}} \\ 
+\eta^y_{2\text{age:country}} \\ \eta^y_{3\text{age:country}}
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{age:country})
+
+\end{align}
+$$ {#eq-model1}
+
+Where $y_i$ are the outcomes, $x_i$ the internet adoption values, and $v_i$ indicate the known sampling variances. We also fit this same model but using the mobile broadband subscriptions as $x$ ("Model 4").
+
+## Model 2
+
+Model 2 was similar to Model 1, but the internet outcome was dropped, and the regression equation for outcomes expanded to include the lagged internet predictor and its two-way interactions
+
+
+$$
+\begin{align*}
+y_i &\sim \text{Normal}(\mu_i, \sigma^{2}v_i) \\
+
+\mu_i &= \alpha_{0} + \beta_{0\text{region}[i]} + \gamma_{0\text{country}[i]} + \delta_{0\text{age}[i]} + \zeta_{0\text{age:region}[i]} + \eta_{0\text{age:country}[i]} \\ &(\alpha_{1} + \beta_{1\text{region}[i]} + \gamma_{1\text{country}[i]} + \delta_{1\text{age}[i]} + \zeta_{1\text{age:region}[i]} + \eta_{1\text{age:country}[i]})\text{Time}_i + \\
+&(\alpha_{2} + \beta_{2\text{region}[i]} + \gamma_{2\text{country}[i]} + \delta_{2\text{age}[i]} + \zeta_{2\text{age:region}[i]} + \eta_{2\text{age:country}[i]})\text{Sex}_i + \\
+&(\alpha_{3} + \beta_{3\text{region}[i]} + \gamma_{3\text{country}[i]} + \delta_{3\text{age}[i]} + \zeta_{3\text{age:region}[i]} + \eta_{3\text{age:country}[i]})\text{Sex}_i \times \text{Time}_i + \\
+&(\alpha_{4} + \beta_{4\text{region}[i]} + \gamma_{4\text{country}[i]} + \delta_{4\text{age}[i]} + \zeta_{4\text{age:region}[i]} + \eta_{4\text{age:country}[i]})\text{Internet}^{\text{t-1}}_i + \\
+&(\alpha_{5} + \beta_{5\text{region}[i]} + \gamma_{5\text{country}[i]} + \delta_{5\text{age}[i]} + \zeta_{5\text{age:region}[i]} + \eta_{5\text{age:country}[i]})\text{Sex}_i \times \text{Internet}^{\text{t-1}}_i \\ \\
+
+\left[\begin{array}{c}
+\beta_{0\text{region}} \\ \beta_{1\text{region}} \\ 
+\beta_{2\text{region}} \\ \beta_{3\text{region}} \\
+\beta_{4\text{region}} \\ \beta_{5\text{region}} 
+\end{array}\right] 
+&\sim MVN(
+\mathbf{0},
+\Sigma^\text{region}),
+
+\left[\begin{array}{c}
+\gamma_{0\text{country}} \\ \gamma_{1\text{country}} \\ 
+\gamma_{2\text{country}} \\ \gamma_{3\text{country}} \\
+\gamma_{2\text{country}} \\ \gamma_{3\text{country}} 
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{country}),
+
+\left[\begin{array}{c}
+\delta_{0\text{age}} \\ \delta_{1\text{age}} \\ 
+\delta_{2\text{age}} \\ \delta_{3\text{age}} \\
+\delta_{4\text{age}} \\ \delta_{5\text{age}}
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{age}), \\
+
+\left[\begin{array}{c}
+\zeta_{0\text{age:region}} \\ \zeta_{1\text{age:region}} \\ 
+\zeta_{2\text{age:region}} \\ \zeta_{3\text{age:region}} \\
+\zeta_{4\text{age:region}} \\ \zeta_{5\text{age:region}}
+\end{array}\right] 
+&\sim MVN(
+\mathbf{0},
+\Sigma^\text{age:region}),
+
+\left[\begin{array}{c}
+\eta_{0\text{age:country}} \\ \eta_{1\text{age:country}} \\ 
+\eta_{2\text{age:country}} \\ \eta_{3\text{age:country}} \\
+\eta_{4\text{age:country}} \\ \eta_{5\text{age:country}}
+\end{array}\right] 
+\sim MVN(
+\mathbf{0},
+\Sigma^\text{age:country})
+\end{align*}
+$$ {#eq-model1}
+
+Where $\text{Internet}^{\text{t-1}}_i$ is the within-country centered 1-year-lagged internet user proportion. We then also fit this model but using the mobile broadband subscription numbers instead of the internet user proportions ("Model 3").
+
+## Model checking and parameters
+
+Next, we display the population-level parameters of each model, along with their numberical HMC diagnostics (ESS and Rhat values).
+
+```{r}
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+fits <- tibble(outcome = oo) %>% 
+  mutate(outcome = fct_inorder(outcome))
+```
+
+### Parameters and diagnostics
+
+Rhats should approach 1, and the latter should approach the number of hmc iterations (about 4000). We first calculate these posterior summaries for each population level parameter for each outcome and model.
+
+```{r model-diagnostics}
+parameter_summary <- function(outcome, model) {
+  path <- str_glue("models/brm-{outcome}-{model}.rds")
+  as_draws_df(
+    readRDS(path), 
+    variable = c("^b_", "^sd_", "^cor_"), 
+    regex = TRUE
+  ) %>%
+    summarise_draws(
+      mean, sd,
+      ~quantile2(., probs = c(.025, .5, .975)),
+      pd = ~pd(as.numeric(.)), 
+      samples = length, 
+      default_convergence_measures()
+    )
+}
+parameter_summary <- memoise(parameter_summary, cache = cd)
+
+fits_parameters <- tibble(
+  path = list.files("models/", full.names = TRUE)
+) %>% 
+  separate(path, c("brm", "outcome", "model"), sep = "-") %>% 
+  select(-brm) %>% 
+  mutate(model = str_extract(model, "[0-9]")) %>% 
+  mutate(parameters = map2(outcome, model, ~parameter_summary(.x, .y))) %>% 
+  unnest(parameters)
+```
+
+Then display them for each model
+
+```{r model-1-diagnostics}
+#| column: body-outset-right
+#| label: tab-model1-diagnostic
+#| tbl-cap: "HMC Diagnostics, Model 1 population-level regression coefficients and country-level (co)variance parameters."
+
+parameter_table <- function(model) {
+  x <- fits_parameters %>% 
+    filter(model == {{model}}) %>% 
+    select(-model)
+  x %>% 
+    kbl(
+      caption = str_glue("Model {model}"),
+      digits = c(0,0,2,2,2,2,2,2,0,2,0,0)
+    ) %>%
+    column_spec(
+      10,
+      color = "white",
+      background = spec_color(
+        log(x$rhat),
+        direction = 1,
+        option = "C",
+        end = .6
+      )
+    ) %>%
+    row_spec(0, bold = TRUE) %>% 
+    kable_custom() %>% 
+    scroll_box(height = "800px", width = "900px")
+}
+```
+
+::: {.panel-tabset}
+
+#### Model 1
+
+```{r}
+#| echo: false
+parameter_table(1)
+```
+
+#### Model 2
+
+```{r}
+#| echo: false
+parameter_table(2)
+```
+
+#### Model 3
+
+```{r}
+#| echo: false
+parameter_table(3)
+```
+
+#### Model 4
+
+```{r}
+#| echo: false
+parameter_table(4)
+```
+
+:::
+
+### Rhats
+
+Take a look at distributions with worst rhats
+
+```{r}
+#| eval: false
+x <- readRDS("models/brm-Depression-3.rds")
+rhat(x, pars = variables(x)[1:10])
+bads <- fits_parameters %>% 
+  group_by(outcome, model) %>% 
+  arrange(outcome, model, desc(rhat)) %>% 
+  slice(1:4)
+bads
+
+foo <- function(outcome, model) {
+  bads <- filter(bads, outcome == {{outcome}}, model == {{model}})
+  x <- readRDS(str_glue("models/brm-{outcome}-{model}.rds"))
+  agg_png(
+    str_glue("diagnostics/bads-{outcome}-{model}.png"),
+    width = W, height = W, units = "in", res = 200
+  )
+  pairs(x$fit, pars = pull(bads, variable))
+  title(sub = str_glue("bads-{outcome}-{model}"))
+  dev.off()
+}
+foo <- memoise(foo, cache = cd)
+fits %>% 
+  crossing(model = 1:4) %>% 
+  mutate(walk2(outcome, model, foo))
+```
+
+
+### Scatterplots
+
+Browse these figures at `diagnostics/`
+
+```{r}
+#| eval: false
+pairsplot <- function(path) {
+  x <- readRDS(str_glue(here(path)))
+  agg_png(
+    str_glue("diagnostics/{path}.png"),
+    width = W*1.5, height = W*1.5, units = "in", res = 200
+  )
+  pairs(x$fit, pars = variables(x)[1:22])
+  title(sub = path)
+  dev.off()
+}
+pairsplot <- memoise(pairsplot, cache = cd)
+list.files("models", full.names = TRUE) %>% 
+  walk(pairsplot)
+```
+
+### Posterior predictive checks
+
+
+```{r ppcheck-density}
+#| eval: false
+#| column: page-right
+#| fig-height: 6
+#| fig-width: 9
+#| fig-cap: "Graphical posterior predictive check by region (Model 1). Thin red lines indicate model replicates, whereas the blue lines indicate data; the model is mostly in smooth agreement with data, but has greater discrepancies in some regions (e.g. Anglo Depression)."
+#| label: fig-ppcheck-1
+
+pp_check_fun <- function(outcome, model) {
+  path <- str_glue("models/brm-{outcome}-{model}.rds")
+  fit <- readRDS(path)
+  pp_check(
+    fit,
+    ndraws = 10,
+    type = "dens_overlay_grouped",
+    group = "region",
+    resp = "val",
+    newdata = fit$data
+  )[[1]]
+}
+pp_check_fun <- memoise(pp_check_fun, cache = cd)
+
+
+cluster_copy(cluster, "pp_check_fun")
+cluster_library(cluster, c("tidyverse", "bayesplot", "brms"))
+pp_checks <- tibble(
+  path = list.files("models/", full.names = TRUE)
+) %>% 
+  separate(path, c("brm", "outcome", "model"), sep = "-") %>% 
+  select(-brm) %>% 
+  mutate(model = str_extract(model, "[0-9]")) %>% 
+  mutate(pp_check = map2(outcome, model, ~pp_check_fun(.x, .y))) %>% 
+  unnest(pp_check)
+
+pp_checks %>%
+  filter(model == 1) %>% 
+  ggplot(aes(value, col = is_y, alpha = is_y, group = rep_id)) +
+  scale_color_brewer(palette = "Set1") +
+  scale_alpha_manual(values = c(.2, 1)) +
+  stat_density(
+    geom = "line",
+    size = .75,
+    position = position_identity()
+  ) +
+  labs(x = "Value", y = "Density") +
+  facet_grid2(
+    outcome ~ group,
+    scales = "free", independent = "x",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(3, "pt"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+```
+

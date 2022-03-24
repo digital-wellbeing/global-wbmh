@@ -5,11 +5,10 @@ project:
 book:
   title: "Online analysis supplement (Vuorre & Przybylski, in prep)"
   author: "Matti Vuorre"
-  date: "2022-01-28"
+  date: "2022-03-28"
   page-navigation: true
   repo-url: https://github.com/digital-wellbeing/global-wbmh/
-  repo-actions: [edit, issue, source]
-  # downloads: [pdf]
+  repo-actions: [issue, source]
   sharing: [twitter, facebook]
   sidebar:
     search: true
@@ -17,19 +16,18 @@ book:
     background: "light"
     alignment: "center"
   chapters:
-    - index.qmd
-    - part: "Preliminaries"
+    - index.Rmd
+    - part: "Data"
       chapters:
-      - clean.qmd
-      - models.qmd
+        - 00-clean.Rmd
+        - 00-describe.Rmd
+    - part: "Models"
+      chapters:
+        - 01-models.Rmd
     - part: "Main results"
       chapters:
-      - timecourses.qmd
-      - associations.qmd
-      - demographics.qmd
-    - part: "Supplementary results"
-      chapters:
-      - supp-a.qmd
+        - 02-results.Rmd
+        - 02-correlations.Rmd
 
 format:
   html:
@@ -41,3 +39,4 @@ execute:
   warning: false
   message: false
   cache: true
+  freeze: auto

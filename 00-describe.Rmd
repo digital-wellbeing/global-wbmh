@@ -1,0 +1,170 @@
+# Describe
+
+```{r setup}
+#| cache: false
+# Packages
+library(scales)
+library(ggtext)
+library(lubridate)
+library(kableExtra)
+library(ggstance)
+library(ggh4x)
+library(mgcv)
+library(tidyverse)
+
+# Load data sets
+itu <- read_rds("data/itu.rds")
+gwp <- read_rds("data/gwp.rds")
+gbd <- read_rds("data/gbd.rds")
+d <- read_rds("data/data-all.rds")
+
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+```
+
+Number of countries/years/people per outcome
+
+```{r}
+bind_rows(
+  "GWP" = gwp,
+  "GBD" = gbd,
+  .id = "Dataset"
+) %>% 
+  mutate(Dataset = fct_inorder(Dataset)) %>% 
+  group_by(Dataset, region, outcome, country) %>% 
+  summarise(
+    n_n = sum(n),
+    n_year = length(unique(year))
+  ) %>% 
+  summarise(
+    N = sum(n_n), 
+    Years = mean(n_year)
+  ) %>%
+  summarise(
+    N_sum = round(mean(N)), 
+    Years_mean = round(mean(Years))
+  ) %>%
+  kbl(caption = "Dataset summary") %>% 
+  kable_custom()
+gwp %>% 
+  group_by(outcome) %>% 
+  summarise(n=sum(n)) %>% 
+  summarise(N=comma(median(n)))
+```
+
+Number of data points per outcome
+
+```{r}
+unique(gwp$age)
+bind_rows(
+  "GWP" = gwp,
+  "GBD" = gbd,
+  .id = "Dataset"
+) %>% 
+  mutate(Dataset = fct_inorder(Dataset)) %>% 
+  count(Dataset, outcome)
+itu %>% 
+  drop_na(internet)
+
+```
+
+## Data figure
+
+```{r trends-regions}
+#| echo: false
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Trends in all variables across regions"
+#| label: fig-trends-regions
+
+# Stack data sets
+# Assume all outcomes are proportions (0-1)
+# Draw small multiples figure, outcomes x regions
+d <- bind_rows(
+  read_rds("data/gwp.rds"),
+  read_rds("data/gbd.rds")
+)
+
+itu <- read_rds("data/itu.rds") %>%
+  select(
+    region, country, year,
+    Internet = internet,
+    Mobile = mobile
+  ) %>%
+  # Truncate mobile percentages for figure
+  mutate(Mobile = if_else(Mobile > 1.5, NaN, Mobile)) %>%
+  pivot_longer(
+    c(Internet, Mobile),
+    names_to = "outcome", values_to = "val"
+  )
+
+tmp_country <- bind_rows(itu, d) %>%
+  mutate(outcome = fct_inorder(str_replace(outcome, "_", "_"))) %>%
+  group_by(region, country, year, outcome) %>%
+  summarise(mean = mean(val, na.rm = TRUE)) %>%
+  ungroup() %>% 
+  mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo)))
+
+tmp_region <- tmp_country %>%
+  group_by(region, outcome) %>%
+  group_modify(~broom::augment(gam(mean ~ s(year, bs = "cs", k = 5), data = .))) %>%
+  ungroup() %>% 
+  mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo)))
+
+tmp_world <- tmp_country %>%
+  group_by(outcome) %>%
+  group_modify(~broom::augment(gam(mean ~ s(year, bs = "cs", k = 5), data = .))) %>%
+  ungroup() %>%
+  mutate(region = "World") %>% 
+  mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo)))
+
+tmp_country %>%
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(year, mean)) +
+  scale_y_continuous(
+    "Value",
+    labels = ~percent(., .1),
+    breaks = pretty_breaks(),
+    expand = expansion(.05)
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015, 2020)),
+    date_labels = "'%y",
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country, outcome)),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  geom_line(
+    data = tmp_region %>% mutate(year = make_date(year)),
+    aes(y = .fitted, group = interaction(region, outcome)),
+    alpha = 1, size = .6, color = "dodgerblue4"
+  ) +
+  geom_line(
+    data = tmp_world %>% mutate(year = make_date(year)),
+    aes(y = .fitted, group = interaction(region, outcome)),
+    alpha = 1, size = .8, color = "dodgerblue4"
+  ) +
+  facet_grid(
+    outcome ~ region,
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "none",
+    panel.spacing.x = unit(4, "pt"),
+    panel.spacing.y = unit(6, "pt"),
+    axis.title.y = element_blank()
+  )
+agg_png(
+  "figures/Fig-trends-data.png",
+  width = W, height = W*0.8, units = "in", res = 400
+)
+last_plot()
+dev.off()
+```
