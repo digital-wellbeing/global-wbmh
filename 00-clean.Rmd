@@ -662,7 +662,7 @@ dat <- left_join(dat, itu)
 dat <- dat %>%
   mutate(year = (year - 2010) / 10)
 
-# Identify values to use in mv models
+# Identify values to use in MV models
 # Indicate unique ITU values for MV model
 dat <- dat %>%
   # Unique values exist for each country-year, but must be given for each
@@ -670,6 +670,13 @@ dat <- dat %>%
   group_by(region, country, year, outcome) %>%
   mutate(itu = 1:n() == 1, itum = 1:n() == 1) %>%
   ungroup()
+
+# This prevents a glitch where rows where ITU==TRUE but internet is missing would not be included in model of val
+dat <- dat %>% 
+  mutate(
+    itu = if_else(itu & is.na(internet), FALSE, itu),
+    itum = if_else(itum & is.na(mobile), FALSE, itum)
+    )
 
 # Ensure that categorical variables are factors
 dat <- dat %>%
