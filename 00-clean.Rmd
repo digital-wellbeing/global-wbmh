@@ -154,6 +154,12 @@ gwp <- gwp %>%
     val = mean(val, na.rm = TRUE)
   ) %>%
   ungroup()
+
+# Note that if there is no response variance, SE will be zero, and if there is only 1 response, SE will be NA. Here we fix those by assigning them the maximum SE (0.5)
+gwp <- gwp %>% 
+  mutate(
+    se = if_else(is.na(se) | se == 0, 0.5, se)
+  )
 ```
 
 We have three data sets with information on countries. Unfortunately, they can all use idiosyncratic naming conventions for the countries, and we therefore harmonise the names in each dataset to the same standard values. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. We do that here for the GWP data, and check that all countries receive a unique name.
