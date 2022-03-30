@@ -261,7 +261,7 @@ We then clean the GBD data and
 gbd <- clean_names(gbd)
 
 # Confirm that correct measures were downloaded:
-distinct(gbd, measure, metric)
+# distinct(gbd, measure, metric)
 gbd <- select(gbd, -metric, -measure)
 gbd <- gbd %>%
   mutate(across(c(val, upper, lower), ~ .x / 100000))

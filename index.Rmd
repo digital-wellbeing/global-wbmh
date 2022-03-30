@@ -25,7 +25,7 @@ The analyses were conducted in R, and can be reproduced locally:
 
 ::: {.callout-important}
 The project repo includes the GBD and ITU datasets, and **a synthetic mock version of the GWP dataset** to enable reproducing all our computations.
-**The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason it might be easier to run the individual `.Rmd` files interactively in RStudio.
+**The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason, the build will fail after having cleaned the data. Then, run `models.R` with settings specific to your environment/cluster. Once that is done you can build again and it should work.
 :::
 
 If something doesn't work please [open an issue](https://github.com/digital-wellbeing/global-wbmh/issues).

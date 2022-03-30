@@ -46,6 +46,8 @@ x_i &\sim \text{Beta}(\mu^x_i, \phi) \\
 \end{align}
 $$
 
+Where $y_i$ are the outcomes, $x_i$ the internet adoption values, and $v_i$ indicate the known sampling variances. We specify adaptive multivariate prior distributions on the coefficients
+
 $$
 \begin{align}
 
@@ -61,7 +63,7 @@ $$
 \left[\begin{array}{c}
 \gamma^y_{0\text{country}} \\ \gamma^y_{1\text{country}} \\ 
 \gamma^y_{2\text{country}} \\ \gamma^y_{3\text{country}} \\
-\gamma^x_{2\text{country}} \\ \gamma^x_{3\text{country}}
+\gamma^x_{0\text{country}} \\ \gamma^x_{1\text{country}}
 \end{array}\right] 
 \sim MVN(
 \mathbf{0},
@@ -95,7 +97,7 @@ $$
 \end{align}
 $$ {#eq-model1}
 
-Where $y_i$ are the outcomes, $x_i$ the internet adoption values, and $v_i$ indicate the known sampling variances. We also fit this same model but using the mobile broadband subscriptions as $x$ ("Model 4").
+We also fit this same model but using the mobile broadband subscriptions as $x$ ("Model 4").
 
 ## Model 2
 

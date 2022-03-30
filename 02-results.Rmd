@@ -3,7 +3,6 @@
 ```{r setup}
 #| cache: false
 # Packages
-library(tidyverse)
 library(scales)
 library(kableExtra)
 library(ggstance)
@@ -18,6 +17,7 @@ library(parameters)
 library(emmeans)
 library(patchwork)
 library(multidplyr)
+library(tidyverse)
 
 cluster <- new_cluster(3)
 
@@ -72,9 +72,6 @@ timecourses_world_average <- fits %>%
     )
   ) %>% 
   collect()
-  
-timecourses_world_average %>% 
-  unnest(out)
 ```
 
 And then for each sex*age at the world level.
@@ -165,7 +162,7 @@ get_region_timecourse_avg <- function(outcome) {
   tmp <- x$data %>% 
     distinct(region, sex) %>% 
     # Note 1 for 10 year change
-    crossing(year = c(0, 1), se = 0, itu = TRUE) %>% 
+    crossing(year = c(0, 1), se = 0, itu = TRUE, val = 1) %>% 
     add_epred_draws(
       x,
       re_formula = ~ (year*sex | region),
@@ -174,7 +171,7 @@ get_region_timecourse_avg <- function(outcome) {
     ) %>% 
     ungroup()
   tmp %>% 
-    select(-.row, -se, -.chain, -.iteration) %>% 
+    select(-.row, -se, -.chain, -.iteration, -val) %>% 
     pivot_wider(names_from = year, values_from = .epred) %>% 
     mutate(delta = `1` - `0`) %>% 
     select(region, sex, .draw, delta) %>% 
@@ -192,8 +189,6 @@ timecourses_region_average <- fits %>%
   partition(cluster) %>% 
   mutate(out = map(outcome, get_region_timecourse_avg)) %>% 
   collect()
-timecourses_region_average %>% 
-  unnest(out)
 ```
 
 Then we calculate the contrasts for each sex*age for each region.
@@ -204,7 +199,7 @@ get_region_timecourse_age <- function(outcome) {
   tmp <- x$data %>% 
     distinct(region, sex, age) %>% 
     # Note 1 for decade change
-    crossing(year = c(0, 1), se = 0, itu = TRUE) %>% 
+    crossing(year = c(0, 1), se = 0, itu = TRUE, val = 1) %>% 
     add_epred_draws(
       x,
       re_formula = ~ (year*sex | age) + 
@@ -214,7 +209,7 @@ get_region_timecourse_age <- function(outcome) {
     ) %>% 
     ungroup()
   tmp %>% 
-    select(-.row, -se, -.chain, -.iteration) %>% 
+    select(-.row, -se, -.chain, -.iteration, -val) %>% 
     pivot_wider(names_from = year, values_from = .epred) %>% 
     mutate(delta = `1` - `0`) %>% 
     select(region, sex, age, .draw, delta) %>% 
@@ -340,7 +335,6 @@ h_internet_associations <- c(
 cluster_copy(cluster, "h_internet_associations")
 
 internet_associations_world_average <- fits %>% 
-  slice(1:3) %>% 
   group_by(outcome) %>% 
   partition(cluster) %>% 
   mutate(
@@ -350,16 +344,12 @@ internet_associations_world_average <- fits %>%
     )
   ) %>% 
   collect()
-  
-internet_associations_world_average %>% 
-  unnest(out)
 ```
 
 And then for each sex*age at the world level.
 
 ```{r}
 internet_associations_world_age <- fits %>% 
-  slice(1:3) %>% 
   group_by(outcome) %>% 
   partition(cluster) %>% 
   mutate(
@@ -369,8 +359,6 @@ internet_associations_world_age <- fits %>%
     )
   ) %>% 
   collect()
-internet_associations_world_age %>% 
-  unnest(out)
 ```
 
 And for all regions too. 
@@ -405,13 +393,10 @@ get_internet_region_association_avg <- memoise(
 cluster_copy(cluster, "get_internet_region_association_avg")
 cluster_library(cluster, c("dplyr", "tidyr", "purrr", "stringr", "tidybayes"))
 internet_associations_region_average <- fits %>% 
-  slice(1:3) %>% 
   group_by(outcome) %>% 
   partition(cluster) %>% 
   mutate(out = map(outcome, get_internet_region_association_avg)) %>% 
   collect()
-internet_associations_region_average %>% 
-  unnest(out)
 ```
 
 #### Demographics
@@ -419,7 +404,7 @@ internet_associations_region_average %>%
 Then we calculate the contrasts for each sex*age for each region.
 
 ```{r}
-get_internet_region_association_age <- function(outcome) {
+ get_internet_region_association_age <- function(outcome) {
   x <- readRDS(str_glue("models/brm-{outcome}-2.rds"))
   tmp <- x$data %>% 
     distinct(region, sex, age) %>% 
@@ -446,7 +431,6 @@ get_internet_region_association_age <- memoise(
 
 cluster_copy(cluster, "get_internet_region_association_age")
 internet_associations_region_age <- fits %>% 
-  slice(1:3) %>% 
   group_by(outcome) %>% 
   partition(cluster) %>% 
   mutate(out = map(outcome, get_internet_region_association_age)) %>% 
@@ -610,9 +594,6 @@ mobile_associations_world_average <- fits %>%
     )
   ) %>% 
   collect()
-  
-mobile_associations_world_average %>% 
-  unnest(out)
 ```
 
 And then for each sex*age at the world level.
@@ -698,7 +679,7 @@ get_region_association_avg <- function(outcome) {
   tmp <- x$data %>% 
     distinct(region, sex) %>% 
     # Note .1 for 10% change
-    crossing(m1_cw = c(0, .1), se = 0, year = 0) %>% 
+    crossing(m1_cw = c(0, .1), se = 0, year = 0, val = 1) %>% 
     add_epred_draws(
       x,
       re_formula = ~ (m1_cw*sex | region),
@@ -706,7 +687,7 @@ get_region_association_avg <- function(outcome) {
     ) %>% 
     ungroup()
   tmp %>% 
-    select(-.row, -se, -.chain, -.iteration) %>% 
+    select(-.row, -se, -.chain, -.iteration, -val) %>% 
     pivot_wider(names_from = m1_cw, values_from = .epred) %>% 
     mutate(delta = `0.1` - `0`) %>% 
     select(region, sex, .draw, delta) %>% 
@@ -724,8 +705,6 @@ mobile_associations_region_average <- fits %>%
   partition(cluster) %>% 
   mutate(out = map(outcome, get_region_association_avg)) %>% 
   collect()
-mobile_associations_region_average %>% 
-  unnest(out)
 ```
 
 Then we calculate the contrasts for each sex*age for each region.
@@ -736,7 +715,7 @@ get_region_association_age <- function(outcome) {
   tmp <- x$data %>% 
     distinct(region, sex, age) %>% 
     # Note .1 for 10% change
-    crossing(m1_cw = c(0, .1), se = 0, year = 0) %>% 
+    crossing(m1_cw = c(0, .1), se = 0, year = 0, val = 1) %>% 
     add_epred_draws(
       x,
       re_formula = ~ (m1_cw*sex | age) + 
@@ -745,7 +724,7 @@ get_region_association_age <- function(outcome) {
     ) %>% 
     ungroup()
   tmp %>% 
-    select(-.row, -se, -.chain, -.iteration) %>% 
+    select(-.row, -se, -.chain, -.iteration, -val) %>% 
     pivot_wider(names_from = m1_cw, values_from = .epred) %>% 
     mutate(delta = `0.1` - `0`) %>% 
     select(region, sex, age, .draw, delta) %>% 
@@ -756,7 +735,7 @@ get_region_association_age <- memoise(
   get_region_association_age, cache = cd
 )
 
-cluster_library(cluster, c("dplyr", "tidyr", "tidybayes"))
+cluster_library(cluster, c("dplyr", "tidyr", "tidybayes", "purrr"))
 cluster_copy(cluster, "get_region_association_age")
 mobile_associations_region_age <- fits %>% 
   group_by(outcome) %>% 
