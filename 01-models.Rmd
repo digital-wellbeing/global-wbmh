@@ -126,7 +126,7 @@ y_i &\sim \text{Normal}(\mu_i, \sigma^{2}v_i) \\
 \left[\begin{array}{c}
 \gamma_{0\text{country}} \\ \gamma_{1\text{country}} \\ 
 \gamma_{2\text{country}} \\ \gamma_{3\text{country}} \\
-\gamma_{2\text{country}} \\ \gamma_{3\text{country}} 
+\gamma_{4\text{country}} \\ \gamma_{5\text{country}} 
 \end{array}\right] 
 \sim MVN(
 \mathbf{0},
