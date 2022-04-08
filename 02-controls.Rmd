@@ -1,0 +1,42 @@
+# Control analyses
+
+```{r setup}
+#| cache: false
+# Packages
+library(scales)
+library(kableExtra)
+library(ggstance)
+library(brms)
+library(tidybayes)
+library(ggdist)
+library(memoise)
+library(cachem)
+library(lubridate)
+library(posterior)
+library(ggh4x)
+library(parameters)
+library(janitor)
+library(countrycode)
+library(emmeans)
+library(patchwork)
+library(multidplyr)
+library(tidyverse)
+
+cluster <- new_cluster(3)
+
+cd <- cache_disk("memoise_cache", max_size = Inf)
+
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+
+fits <- tibble(outcome = oo) %>%
+  mutate(outcome = factor(outcome, levels = oo))
+
+dat <- readRDS("data/data-all.rds")
+```
+
+
+Here, we analyse associations between other country-level indicators and well-being and mental health.
+
