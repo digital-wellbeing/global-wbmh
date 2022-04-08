@@ -40,3 +40,51 @@ dat <- readRDS("data/data-all.rds")
 
 Here, we analyse associations between other country-level indicators and well-being and mental health.
 
+
+```{r}
+hdi <- read_rds("data/hdi.rds")
+hdi %>%
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(year, hdi)) +
+  scale_y_continuous(
+    "Value",
+    labels = ~percent(., .1),
+    breaks = pretty_breaks(),
+    expand = expansion(.05)
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015, 2020)),
+    date_labels = "'%y",
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(group = interaction(country)),
+    alpha = .25, size = .4, color = "dodgerblue1"
+  ) +
+  facet_grid(
+    ~ region,
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "none",
+    panel.spacing.x = unit(4, "pt"),
+    panel.spacing.y = unit(6, "pt"),
+    axis.title.y = element_blank()
+  )
+```
+
+```{r}
+# Merge to country-aggregated outcomes
+tmp <- dat %>% 
+  mutate(year = (year * 10 + 2010)) %>% 
+  group_by(country, year, outcome) %>% 
+  summarise(val = mean(val, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  right_join(hdi) %>% 
+  mutate(year = (year - 2010) / 10) %>% 
+  drop_na(val)
+```
+
