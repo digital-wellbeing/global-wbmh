@@ -637,6 +637,7 @@ itu %>%
 
 ## Prepare model data
 
+-   Combine all predictors into one table (primary ITU and controls HDI)
 -   Create lagged and centered predictors
 -   Transform edge values of internet variable to fit beta
     -   2 values were changed (0 in Timor-Leste in 2002, and 1 in UAE 2020)
@@ -645,13 +646,16 @@ itu %>%
 -   Ensure that age and sex are treated with contrast codes
 
 ```{r model-prepare-data}
+# Merge different predictors to itu
+itu <- left_join(itu, hdi)
+
 # Create lagged predictors
 itu <- itu %>% 
   arrange(region, country, year) %>%
   group_by(region, country) %>%
   mutate(
     across(
-      c(internet, mobile),
+      c(internet, mobile, hdi),
       list(`1` = ~ lag(., 1)),
       .names = "{str_sub(.col, 1, 1)}{.fn}"
     )
@@ -662,16 +666,12 @@ itu <- itu %>%
 itu <- itu %>%
   group_by(country) %>%
   mutate(
-    i1_cb = mean(i1, na.rm = TRUE), # Country average
-    i1_cw = i1 - i1_cb, # Year-specific deviation from country average
-    m1_cb = mean(m1, na.rm = TRUE),
-    m1_cw = m1 - m1_cb,
-  ) %>%
-  # Grand-mean center the country averages
-  ungroup() %>% 
-  mutate(
-    across(c(i1_cb, m1_cb), ~ . - mean(., na.rm = T))
-  )
+    # Year-specific deviations from country average
+    i1_cw = i1 - mean(i1, na.rm = TRUE), 
+    m1_cw = m1 - mean(m1, na.rm = TRUE),
+    h1_cw = h1 - mean(h1, na.rm = TRUE)
+  ) %>% 
+  ungroup()
 
 # Transform internet edge cases
 itu <- itu %>%
@@ -735,6 +735,5 @@ write_rds(dat, "data/data-all.rds")
 write_rds(itu, "data/itu.rds")
 write_rds(gwp, "data/gwp.rds")
 write_rds(gbd, "data/gbd.rds")
-write_rds(hdi, "data/hdi.rds")
 ```
 
