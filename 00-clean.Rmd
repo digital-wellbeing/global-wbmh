@@ -527,80 +527,31 @@ hdi <- hdi %>%
   mutate(country = countryname(country))
 ```
 
-## GLOBE regions
+## Regions
 
-We group the countries into GLOBE regions in order to have a higher level of grouping at which the analyses can be summarised. This allows us to eg. present figures and tables per region, instead of overwhelmingly by country, and also provides an upper level for the multilevel models. We use the extended GLOBE regions following Jebb et al. (2020), and had to manually add labels to some countries that were not grouped in those studies.
+>continent: "Continent as defined in the World Bank Development Indicators"
 
-```{r globe-regions}
-#| results: hold
-#| label: tbl-globe
-#| tbl-cap: "Countries with manually filled region"
-
-regions <- read_csv(
-  "data-raw/Regions/GLOBE-regions-from-Jebb-et-al-2020.csv"
-) %>%
-  # Jebb et al used * to indicate deviance from GLOBE, remove
-  mutate(country = str_remove_all(country, "\\*")) %>%
-  # Standardize country names
-  # This drops Nagorno-Karabakh Republic
-  mutate(country = countryname(country)) %>%
-  drop_na(country)
-
-# This also combined Swaziland and (Eswatini) to Eswatini, and Northern- and Cyprus. Therefore we just take the distinct country & region.
-regions <- distinct(regions, region, country)
-
-# Countries in GBD not present in region data
-no_region_gbd <- filter(
+```{r}
+regions <- bind_rows(
+  distinct(itu, country),
   distinct(gbd, country),
-  !(country %in% unique(regions$country))
-) %>%
-  arrange(country)
+  distinct(gwp, country)
+) %>% 
+  distinct() %>% 
+  mutate(
+    region = countrycode(
+      country, 
+      origin = "country.name", 
+      destination = "continent"
+    )
+  )
 
-# Then see what countries in GWP are without region
-no_region_gwp <- filter(
-  distinct(gwp, country),
-  !(country %in% unique(regions$country))
-) %>%
-  arrange(country)
-
-bind_rows(no_region_gbd, no_region_gwp) %>%
-  arrange(country) %>%
-  distinct() %>%
-  write_csv("data-raw/Regions/countries-without-region.csv")
-
-# I then filled missing regions in Jebb et al and extended GLOBE referenced therein
-
-# Load our manually filled region data
-regions_filled <- read_csv(
-  "data-raw/Regions/countries-without-region-filled.csv"
-)
-
-# Combine Jebb et al GLOBE regions and our manually added ones
-regions <- regions %>%
-  bind_rows(
-    regions_filled %>%
-      mutate(Note = "Filled")
-  ) %>%
-  arrange(region, country)
-
-# Shorter name for plots
-regions <- regions %>%
-  mutate(region = if_else(region == "Sub-Sahara Africa", "Africa", region))
-
-# Display table of regions and countries
-regions %>%
-  drop_na(Note) %>%
-  select(-Note) %>%
-  arrange(region, country) %>%
-  kbl(caption = "Countries with a manually filled region") %>%
-  kable_custom()
-
-# Clean region labels
-regions$region <- str_replace_all(regions$region, " ", "_")
-regions$region <- factor(regions$region)
-
-# Remove unnecessary items
-regions <- select(regions, -Note)
+# Manually fix two countries
+regions <- regions %>% 
+  mutate(
+    region = if_else(country == "Kosovo", "Europe", region),
+    region = if_else(country == "Nagorno Karabakh", "Asia", region)
+    )
 
 # Add regions to data tables
 itu <- left_join(itu, regions)
@@ -609,9 +560,16 @@ gwp <- left_join(gwp, regions)
 hdi <- left_join(hdi, regions) %>% 
   drop_na(region)
 
-# Remove now unnecessary variables
-rm(no_region_gbd, no_region_gwp, regions_filled, regions)
+regions %>% 
+  group_by(region) %>%
+  summarise(
+    N = n(),
+    Countries = str_c(country, collapse = ", ")
+  ) %>% 
+  kbl(caption = "Regions") %>% 
+  kable_custom()
 ```
+
 
 ## ITU summary table
 
