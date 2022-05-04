@@ -19,6 +19,9 @@ library(ellipse)
 library(ggh4x)
 library(patchwork)
 
+# Common options
+source("_common.R")
+
 cd <- cache_disk("memoise_cache", max_size = Inf)
 cluster <- new_cluster(3)
 

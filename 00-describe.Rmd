@@ -12,6 +12,9 @@ library(ggh4x)
 library(mgcv)
 library(tidyverse)
 
+# Common options
+source("_common.R")
+
 # Load data sets
 itu <- read_rds("data/itu.rds")
 gwp <- read_rds("data/gwp.rds")

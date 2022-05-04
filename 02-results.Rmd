@@ -19,6 +19,9 @@ library(patchwork)
 library(multidplyr)
 library(tidyverse)
 
+# Common options
+source("_common.R")
+
 cluster <- new_cluster(3)
 
 cd <- cache_disk("memoise_cache", max_size = Inf)

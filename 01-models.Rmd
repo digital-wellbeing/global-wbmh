@@ -18,6 +18,9 @@ library(cmdstanr)
 library(brms)
 library(multidplyr)
 
+# Common options
+source("_common.R")
+
 cluster <- new_cluster(3)
 
 cd <- cache_disk("memoise_cache", max_size = Inf)

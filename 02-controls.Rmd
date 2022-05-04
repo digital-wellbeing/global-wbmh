@@ -14,6 +14,9 @@ library(janitor)
 library(patchwork)
 library(tidyverse)
 
+# Common options
+source("_common.R")
+
 cd <- cache_disk("memoise_cache", max_size = Inf)
 
 oo <- c(
