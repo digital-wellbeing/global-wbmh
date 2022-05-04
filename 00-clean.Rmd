@@ -503,6 +503,8 @@ itu <- itu_long %>%
 rm(itu_long)
 ```
 
+## HDI
+
 This data set was downloaded from <http://hdr.undp.org/en/indicators/137506#> in November 2021, and shared here under the terms of use <http://hdr.undp.org/en/content/copyright-and-terms-use>.
 
 ```{r}
@@ -667,6 +669,9 @@ itu <- itu %>%
   group_by(country) %>%
   mutate(
     # Year-specific deviations from country average
+    i_cw = internet - mean(internet, na.rm = TRUE), 
+    m_cw = internet - mean(mobile, na.rm = TRUE),
+    h_cw = internet - mean(hdi, na.rm = TRUE),
     i1_cw = i1 - mean(i1, na.rm = TRUE), 
     m1_cw = m1 - mean(m1, na.rm = TRUE),
     h1_cw = h1 - mean(h1, na.rm = TRUE)
