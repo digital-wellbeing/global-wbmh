@@ -69,16 +69,16 @@ bind_rows(
   count(Dataset, outcome) %>% 
   kbl(caption = "Observations per outcome") %>% 
   kable_custom()
-
 ```
 
 Number of ITU observations
 
 ```{r}
-tmp <- itu %>% 
-  select(region, country, year, internet, mobile)
-tmp %>% 
-  drop_na(mobile)
+itu %>% 
+  summarise(
+    internet = sum(!is.na(internet)),
+    mobile = sum(!is.na(mobile))
+  )
 ```
 
 
