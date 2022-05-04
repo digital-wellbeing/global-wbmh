@@ -18,6 +18,9 @@ library(gtsummary)
 library(kableExtra)
 library(tidyverse)
 
+# Common options
+source("_common.R")
+
 # Create directory for intermediate files
 dir.create("data", FALSE)
 ```
