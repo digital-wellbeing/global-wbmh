@@ -21,10 +21,10 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = min(ncores %/% nchains, 3),
-  iter = 2200,
-  warmup = 1100,
+  iter = 2500,
+  warmup = 1250,
   refresh = 100,
-  adapt_delta = .94,
+  adapt_delta = .95,
   max_treedepth = 10
 )
 
@@ -51,14 +51,14 @@ bf_itu <- bf(
   internet | subset(itu) ~
     year +
     (year |c| country),
-  family = Beta()
+  family = gaussian()
 )
 bf_val <- bf(
   val | se(se, sigma = TRUE) + subset(!is.na(val)) ~
     year * sex +
     (year * sex | c | country) +
-    (year * sex || age) +
-    (year * sex || age:country),
+    (year * sex | age) +
+    (year * sex | age:country),
   family = gaussian()
 )
 bf_1 <- bf_itu + bf_val + set_rescor(FALSE)
@@ -76,8 +76,8 @@ bf_3 <- bf(
   val | se(se, sigma = TRUE) ~
     (year + i1_cw) * sex +
     ((year + i1_cw) * sex | country) +
-    ((year + i1_cw) * sex || age) +
-    ((year + i1_cw) * sex || age:country),
+    ((year + i1_cw) * sex | age) +
+    ((year + i1_cw) * sex | age:country),
   family = gaussian()
 )
 
@@ -86,8 +86,8 @@ bf_4 <- bf(
   val | se(se, sigma = TRUE) ~
     (year + m1_cw) * sex +
     ((year + m1_cw) * sex | country) +
-    ((year + m1_cw) * sex || age) +
-    ((year + m1_cw) * sex || age:country),
+    ((year + m1_cw) * sex | age) +
+    ((year + m1_cw) * sex | age:country),
   family = gaussian()
 )
 
@@ -100,6 +100,32 @@ fits <- fits %>%
 hmc$data <- fits$data[[cmdargs]]
 hmc$formula <- fits$bfrm[[cmdargs]]
 hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
+hmc$prior <- NULL
+
+# Assign prior for mental health outcomes
+if (fits$outcome[[cmdargs]] %in% c("Anxiety", "Depression", "Selfharm"))
+  hmc$prior <- prior(
+    lkj(6), class = cor, group = age
+  ) +
+  prior(
+    lkj(6), class = cor, group = age:country
+  ) +
+  prior(
+    student_t(7, 0, .2), class = sd, group = age:country, resp = val,
+    coef = "Intercept"
+  ) +
+  prior(
+    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
+    coef = "sex1"
+  ) +
+  prior(
+    student_t(7, 0, .05), class = sd, group = age:country, resp = val,
+    coef = "year"
+  ) +
+  prior(
+    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
+    coef = "year:sex1"
+  )
 
 cat("Now fitting", hmc$file)
 
