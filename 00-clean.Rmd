@@ -336,15 +336,15 @@ After downloading, we cleaned the ITU data to a shape concordant with the outcom
 if (!file.exists("data-raw/ITU/PercentIndividualsUsingInternet.xlsx")) {
   dir.create("data-raw/ITU")
   download.file(
-    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/PercentIndividualsUsingInternet_Nov2021.xlsx",
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/December/PercentIndividualsUsingInternet.xlsx",
     "data-raw/ITU/PercentIndividualsUsingInternet.xlsx"
   )
   download.file(
-    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/FixedBroadbandSubscriptions_2000-2020.xlsx",
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/December/FixedBroadbandSubscriptions_2000-2020.xlsx",
     "data-raw/ITU/FixedBroadbandSubscriptions_2000-2020.xlsx"
   )
   download.file(
-    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/July/MobileBroadbandSubscriptions_2007-2020.xlsx",
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2021/December/MobileBroadbandSubscriptions_2007-2020.xlsx",
     "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx"
   )
 }
@@ -627,15 +627,18 @@ itu <- itu %>%
 
 # Centering predictors within and between countries
 itu <- itu %>%
+  # Grand mean centering so both components are zero-centered
+  mutate(across(c(i1, m1, h1), ~. - mean(., na.rm = TRUE))) %>% 
   group_by(country) %>%
   mutate(
-    # Year-specific deviations from country average
-    i_cw = internet - mean(internet, na.rm = TRUE), 
-    m_cw = internet - mean(mobile, na.rm = TRUE),
-    h_cw = internet - mean(hdi, na.rm = TRUE),
-    i1_cw = i1 - mean(i1, na.rm = TRUE), 
-    m1_cw = m1 - mean(m1, na.rm = TRUE),
-    h1_cw = h1 - mean(h1, na.rm = TRUE)
+    # Between
+    i1_cb = mean(i1, na.rm = TRUE),
+    m1_cb = mean(m1, na.rm = TRUE),
+    h1_cb = mean(h1, na.rm = TRUE),
+    # Within
+    i1_cw = i1 - i1_cb, 
+    m1_cw = m1 - m1_cb,
+    h1_cw = h1 - h1_cb
   ) %>% 
   ungroup()
 
@@ -685,7 +688,7 @@ oo <- c(
 )
 dat <- dat %>%
   mutate(outcome = factor(outcome, levels = oo)) %>% 
-  arrange(outcome, region, country, year)
+  arrange(outcome, country, region, year)
 
 # Selfharm models don't converge with SEs
 dat <- dat %>% 

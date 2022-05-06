@@ -95,37 +95,52 @@ bf_4 <- bf(
 fits <- fits %>%
   crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
 
+# Assign priors to mental health outcomes
+# Defaults to all
+fits <- fits %>%
+  mutate(
+    prior = map2(bfrm, data, ~get_prior(.x, .y))
+  )
+# Informative ones to mental health
+ip <- c(
+  prior(
+    lkj(6), class = cor, group = age
+  ),
+  prior(
+    lkj(6), class = cor, group = age:country
+  ),
+  prior(
+    student_t(7, 0, .2), class = sd, group = age:country, resp = val,
+    coef = "Intercept"
+  ),
+  prior(
+    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
+    coef = "sex1"
+  ),
+  prior(
+    student_t(7, 0, .05), class = sd, group = age:country, resp = val,
+    coef = "year"
+  ),
+  prior(
+    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
+    coef = "year:sex1"
+  )
+)
+fits <- fits %>%
+  mutate(
+    prior = if_else(
+      outcome %in% c("Anxiety", "Depression", "Selfharm"),
+      list(ip),
+      prior
+    )
+  )
+
+
 # fit model ---------------------------------------------------------------
 
 hmc$data <- fits$data[[cmdargs]]
 hmc$formula <- fits$bfrm[[cmdargs]]
 hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
-hmc$prior <- NULL
-
-# Assign prior for mental health outcomes
-if (fits$outcome[[cmdargs]] %in% c("Anxiety", "Depression", "Selfharm"))
-  hmc$prior <- prior(
-    lkj(6), class = cor, group = age
-  ) +
-  prior(
-    lkj(6), class = cor, group = age:country
-  ) +
-  prior(
-    student_t(7, 0, .2), class = sd, group = age:country, resp = val,
-    coef = "Intercept"
-  ) +
-  prior(
-    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
-    coef = "sex1"
-  ) +
-  prior(
-    student_t(7, 0, .05), class = sd, group = age:country, resp = val,
-    coef = "year"
-  ) +
-  prior(
-    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
-    coef = "year:sex1"
-  )
 
 cat("Now fitting", hmc$file)
 
