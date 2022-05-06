@@ -5,7 +5,6 @@
 cmdargs <- commandArgs(trailingOnly = TRUE)
 cmdargs <- as.numeric(cmdargs)
 if (length(cmdargs) == 0) cmdargs <- menu(c(1:24, "Abort"), "Choose model")
-cat("\nFitting row\n", cmdargs)
 
 # ---- setup ---------------------------------------------------------------
 
@@ -101,5 +100,7 @@ fits <- fits %>%
 hmc$data <- fits$data[[cmdargs]]
 hmc$formula <- fits$bfrm[[cmdargs]]
 hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
+
+cat("Now fitting", hmc$file)
 
 do.call(brm, hmc)
