@@ -74,7 +74,7 @@ bf_2 <- bf_mobile + bf_val + set_rescor(FALSE)
 # Univariate outcome on time and internet
 bf_3 <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + i1_cw) * sex +
+    (year + i1_cw) * sex + i1_cb +
     ((year + i1_cw) * sex | country) +
     ((year + i1_cw) * sex | age) +
     ((year + i1_cw) * sex | age:country),
@@ -84,7 +84,7 @@ bf_3 <- bf(
 # Univariate outcome on time and mobile
 bf_4 <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + m1_cw) * sex +
+    (year + m1_cw) * sex + m1_cb +
     ((year + m1_cw) * sex | country) +
     ((year + m1_cw) * sex | age) +
     ((year + m1_cw) * sex | age:country),
