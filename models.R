@@ -142,6 +142,6 @@ hmc$data <- fits$data[[cmdargs]]
 hmc$formula <- fits$bfrm[[cmdargs]]
 hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
 
-cat("Now fitting", hmc$file)
+cat("\n\nNow fitting", hmc$file, "\n\n")
 
 do.call(brm, hmc)
