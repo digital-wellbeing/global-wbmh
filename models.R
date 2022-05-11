@@ -61,7 +61,14 @@ bf_val <- bf(
     (year * sex | age:country),
   family = gaussian()
 )
-bf_1 <- bf_itu + bf_val + set_rescor(FALSE)
+# Model for well-being outcomes
+bf_1 <- bf_itu +
+  bf_val +
+  set_rescor(FALSE)
+# Simplified model for mental health outcomes
+bf_1.s <- bf_itu +
+  update(bf_val, ~ . -(year * sex | age:country)) +
+  set_rescor(FALSE)
 
 # Bivariate mobile & outcome on time
 bf_mobile <- bf(
@@ -69,7 +76,12 @@ bf_mobile <- bf(
     year +
     (year |c| country)
 )
-bf_2 <- bf_mobile + bf_val + set_rescor(FALSE)
+bf_2 <- bf_mobile +
+  bf_val +
+  set_rescor(FALSE)
+bf_2.s <- bf_mobile +
+  update(bf_val, ~ . -(year * sex | age:country)) +
+  set_rescor(FALSE)
 
 # Univariate outcome on time and internet
 bf_3 <- bf(
@@ -80,6 +92,7 @@ bf_3 <- bf(
     ((year + i1_cw) * sex | age:country),
   family = gaussian()
 )
+bf_3.s <- update(bf_3, ~ . -((year + i1_cw) * sex | age:country))
 
 # Univariate outcome on time and mobile
 bf_4 <- bf(
@@ -90,50 +103,24 @@ bf_4 <- bf(
     ((year + m1_cw) * sex | age:country),
   family = gaussian()
 )
-
+bf_4.s <- update(bf_4, ~ . -((year + m1_cw) * sex | age:country))
 
 fits <- fits %>%
   crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
 
-# Assign priors to mental health outcomes
-# Defaults to all
+# Simplify models for mental health outcomes
+MH <- c("Anxiety", "Depression", "Selfharm")
 fits <- fits %>%
   mutate(
-    prior = map2(bfrm, data, ~get_prior(.x, .y))
-  )
-# Informative ones to mental health
-ip <- c(
-  prior(
-    lkj(6), class = cor, group = age
-  ),
-  prior(
-    lkj(6), class = cor, group = age:country
-  ),
-  prior(
-    student_t(7, 0, .2), class = sd, group = age:country, resp = val,
-    coef = "Intercept"
-  ),
-  prior(
-    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
-    coef = "sex1"
-  ),
-  prior(
-    student_t(7, 0, .05), class = sd, group = age:country, resp = val,
-    coef = "year"
-  ),
-  prior(
-    student_t(7, 0, .02), class = sd, group = age:country, resp = val,
-    coef = "year:sex1"
-  )
-)
-fits <- fits %>%
-  mutate(
-    prior = if_else(
-      outcome %in% c("Anxiety", "Depression", "Selfharm"),
-      list(ip),
-      prior
+    bfrm = case_when(
+      outcome %in% MH & model == 1 ~ list(bf_1.s),
+      outcome %in% MH & model == 2 ~ list(bf_2.s),
+      outcome %in% MH & model == 3 ~ list(bf_3.s),
+      outcome %in% MH & model == 4 ~ list(bf_4.s),
+      TRUE ~ bfrm
     )
-  )
+  ) %>%
+  arrange(outcome, model)
 
 
 # fit model ---------------------------------------------------------------
