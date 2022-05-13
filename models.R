@@ -105,8 +105,19 @@ bf_4 <- bf(
 )
 bf_4.s <- update(bf_4, ~ . -((year + m1_cw) * sex | age:country))
 
+# Univariate outcome on time and hdi
+bf_5 <- bf(
+  val | se(se, sigma = TRUE) ~
+    (year + h1_cw) * sex + h1_cb +
+    ((year + h1_cw) * sex | country) +
+    ((year + h1_cw) * sex | age) +
+    ((year + h1_cw) * sex | age:country),
+  family = gaussian()
+)
+bf_5.s <- update(bf_5, ~ . -((year + h1_cw) * sex | age:country))
+
 fits <- fits %>%
-  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
+  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4, bf_5), model = 1:5))
 
 # Simplify models for mental health outcomes
 MH <- c("Anxiety", "Depression", "Selfharm")
@@ -117,6 +128,7 @@ fits <- fits %>%
       outcome %in% MH & model == 2 ~ list(bf_2.s),
       outcome %in% MH & model == 3 ~ list(bf_3.s),
       outcome %in% MH & model == 4 ~ list(bf_4.s),
+      outcome %in% MH & model == 5 ~ list(bf_5.s),
       TRUE ~ bfrm
     )
   ) %>%
