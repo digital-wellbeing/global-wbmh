@@ -1,6 +1,6 @@
 # Data preparation
 
-```{r setup}
+```{r setup, include = FALSE}
 #| cache: false
 #| results: hide
 #| message: false
@@ -59,6 +59,7 @@ Here we import the relevant variables from Gallup's SPSS files and then
 -   Calculate scale scores (means over items)
 -   Rescale outcomes to proportions (0 - 1)
 -   Create age categories in line with GBD data
+-   Aggregate data to means and SEs at each country * year * age * sex group
 -   Drop one 13 year old as this data should only have people 15 and older
 -   Exclude people older than 89
 
@@ -165,7 +166,7 @@ gwp <- gwp %>%
   )
 ```
 
-We have three data sets with information on countries. Unfortunately, they can all use idiosyncratic naming conventions for the countries, and we therefore harmonise the names in each dataset to the same standard values. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. We do that here for the GWP data, and check that all countries receive a unique name.
+We have multiple data sets with information on countries. Unfortunately, they can all use idiosyncratic naming conventions for the countries, and we therefore harmonise the names in each dataset to the same standard values. We use the short English names from the UNICODE CLDR project as provided by `countrycode::countryname()`. We do that here for the GWP data, and check that all countries receive a unique name.
 
 ```{r gwp-harmonise-countries}
 #| label: tbl-gwp-countries
@@ -257,7 +258,6 @@ We then clean the GBD data and
 -   Convert outcome rates to proportions (0 - 1)
 -   Clean cause names and rename to outcome to harmonise with GWP
 -   Convert GBD estimated rate CI limits to an approximate standard error
--   Subset data to young people (10 - 24)
 
 ```{r gbd-data-clean}
 # First step is to clean names
@@ -521,10 +521,6 @@ hdi <- read_csv("data-raw/HDI/Human Development Index (HDI).csv", skip = 5) %>%
   mutate(across(year:hdi, as.numeric)) %>% 
   filter(year >= 2000)
 
-# Replace broken string
-hdi$country[46]
-hdi$country[46] <- "Côte d’Ivoire"
-
 # Harmonise names
 hdi <- hdi %>% 
   mutate(country = countryname(country))
@@ -532,7 +528,7 @@ hdi <- hdi %>%
 
 ## Regions
 
->continent: "Continent as defined in the World Bank Development Indicators"
+We also include a `region` variable in the data ("Continent as defined in the World Bank Development Indicators") to allow grouping countries in figures and outputs.
 
 ```{r}
 regions <- bind_rows(
@@ -573,40 +569,14 @@ regions %>%
   kable_custom()
 ```
 
-
-## ITU summary table
-
-```{r itu-summary-table}
-#| column: page-right
-#| tbl-cap: "Mean internet user percentages across regions and time."
-#| label: tbl-itusummary
-
-itu %>%
-  select(region, country, year, internet) %>%
-  mutate(internet = internet * 100) %>%
-  mutate(region = str_replace(region, "_", " ")) %>%
-  pivot_wider(names_from = year, values_from = internet) %>%
-  select(-country) %>%
-  tbl_summary(
-    by = region,
-    missing = "no",
-    statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
-  ) %>%
-  add_overall(col_label = "Total") %>%
-  as_kable_extra(caption = "ITU summary") %>%
-  row_spec(0, bold = TRUE) %>%
-  kable_custom()
-```
-
 ## Prepare model data
 
--   Combine all predictors into one table (primary ITU and controls HDI)
+We then further wrangle this data in preparation for the models:
+
+-   Combine all predictors into one table
 -   Create lagged and centered predictors
--   Transform edge values of internet variable to fit beta
-    -   2 values were changed (0 in Timor-Leste in 2002, and 1 in UAE 2020)
 -   Join outcome and predictor tables
--   Center year on 2010 (roughly in the middle)
--   Ensure that age and sex are treated with contrast codes
+-   Center year on 2010 (roughly in the middle) and divide by ten ("effect" of decades)
 
 ```{r model-prepare-data}
 # Merge different predictors to itu
@@ -641,11 +611,6 @@ itu <- itu %>%
     h1_cw = h1 - h1_cb
   ) %>% 
   ungroup()
-
-# Transform internet edge cases
-itu <- itu %>%
-  mutate(internet = if_else(internet == 0, .0000001, internet)) %>%
-  mutate(internet = if_else(internet == 1, .9999999, internet))
 
 # Stack outcome data
 dat <- bind_rows(gwp, gbd)
@@ -705,4 +670,3 @@ write_rds(itu, "data/itu.rds")
 write_rds(gwp, "data/gwp.rds")
 write_rds(gbd, "data/gbd.rds")
 ```
-
