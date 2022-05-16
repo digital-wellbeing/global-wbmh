@@ -1,8 +1,7 @@
 # Preface {.unnumbered}
 
-Welcome! This document is the online analysis supplement to *Global mental health and well-being in the internet age* (Vuorre & Przybylski, [preprint]() in preparation). It contains all the analyses reported in the manuscript along with supplemental analyses. The data and source code are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [OSF](https://osf.io/ys7m9/).
+Welcome! This document is the online analysis supplement to *Global mental health and well-being in the internet age* (Vuorre & Przybylski, [submitted]()). It contains all the analyses reported in the manuscript along with supplemental figures and data. The data and source code are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [OSF](https://osf.io/ys7m9/).
 
-::: {.callout-note}
 ### How to reproduce our results
 
 The analyses were conducted in R, and can be reproduced locally:
@@ -23,10 +22,10 @@ The analyses were conducted in R, and can be reproduced locally:
       OR
   - RStudio: Open the project (`global-wbmh.Rproj`) and click Render in the Build panel
 
+If you encounter problems, please [open an issue](https://github.com/digital-wellbeing/global-wbmh/issues).
+
 ::: {.callout-important}
-The project repo includes the GBD and ITU datasets, and **a synthetic mock version of the GWP dataset** to enable reproducing all our computations.
+The project repo includes the GBD and ITU datasets, and a synthetic mock version of the GWP dataset to enable reproducing all our computations.
 **The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason, the build will fail after having cleaned the data. Then, run `models.R` with settings specific to your environment/cluster. Once that is done you can build again and it should work.
 :::
 
-If something doesn't work please [open an issue](https://github.com/digital-wellbeing/global-wbmh/issues).
-:::
