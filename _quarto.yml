@@ -3,7 +3,7 @@ project:
   output-dir: docs
 
 book:
-  title: "Online analysis supplement (Vuorre & Przybylski, in prep)"
+  title: "Online analysis supplement (Vuorre & Przybylski, 2022)"
   author: "Matti Vuorre"
   date: "2022-03-28"
   page-navigation: true
@@ -17,17 +17,14 @@ book:
     alignment: "center"
   chapters:
     - index.Rmd
-    - part: "Data"
+    - part: "Preliminaries"
       chapters:
         - 00-clean.Rmd
         - 00-describe.Rmd
-    - part: "Models"
-      chapters:
         - 01-models.Rmd
-    - part: "Main results"
+    - part: "Results"
       chapters:
         - 02-results.Rmd
-        - 02-correlations.Rmd
 
 format:
   html:
