@@ -21,7 +21,8 @@ W <- 9
 
 library(knitr)
 opts_chunk$set(
-  cache.lazy = FALSE
+  cache.lazy = FALSE,
+  echo = FALSE
 )
 
 source("R/functions.R")
