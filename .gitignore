@@ -12,6 +12,7 @@ data-raw/*
 output/
 docs/
 models/
+models-small/
 data/
 **/*.docx
 diagnostics/
