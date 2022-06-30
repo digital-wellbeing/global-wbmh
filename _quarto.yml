@@ -25,6 +25,9 @@ book:
     - part: "Results"
       chapters:
         - 02-results.Rmd
+    - part: "Supplementary"
+      chapters:
+        - 05-supp.Rmd
 
 format:
   html:

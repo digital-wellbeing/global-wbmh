@@ -14,7 +14,6 @@ library(haven)
 library(labelled)
 library(countrycode)
 library(lubridate)
-library(gtsummary)
 library(kableExtra)
 library(tidyverse)
 

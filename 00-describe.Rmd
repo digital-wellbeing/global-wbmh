@@ -1,6 +1,6 @@
 # Describe
 
-```{r setup}
+```{r setup, include = FALSE}
 #| cache: false
 # Packages
 library(scales)
@@ -9,7 +9,9 @@ library(lubridate)
 library(kableExtra)
 library(ggstance)
 library(ggh4x)
+library(gtsummary)
 library(mgcv)
+library(plotly)
 library(tidyverse)
 
 # Common options
@@ -26,6 +28,10 @@ oo <- c(
   "Anxiety", "Depression", "Selfharm"
 )
 ```
+
+Here are some descriptives of the datasets.
+
+## Sample summaries
 
 Number of countries/years/people per outcome
 
@@ -49,7 +55,7 @@ bind_rows(
     N_sum = round(mean(N)), 
     Years_mean = round(mean(Years))
   ) %>%
-  kbl(caption = "Dataset summary") %>% 
+  kbl(caption = "Number of respondents and years by outcome and region") %>% 
   kable_custom()
 tmp <- gwp %>% 
   group_by(outcome) %>% 
@@ -58,9 +64,9 @@ tmp <- gwp %>%
   pull(N)
 ```
 
-The median number of respondents per (well-being) outcome was `r tmp`, and the unique age bins in the GWP data were `r unique(gwp$age)`.
+The median number of respondents per Gallup well-being outcome was `r tmp`, and the unique age bins in the GWP data were `r unique(gwp$age)`. 
 
-Number of data points per outcome
+We then examined the total number of observations (cell means and SEs) per outcome
 
 ```{r}
 bind_rows(
@@ -70,26 +76,66 @@ bind_rows(
 ) %>% 
   mutate(Dataset = fct_inorder(Dataset)) %>% 
   count(Dataset, outcome) %>% 
+  bind_rows(
+    itu %>% 
+      select(internet, mobile) %>% 
+      pivot_longer(everything(), names_to = "outcome") %>% 
+      drop_na(value) %>% 
+      count(outcome) %>% 
+      mutate(Dataset = "ITU")
+  ) %>% 
   kbl(caption = "Observations per outcome") %>% 
   kable_custom()
 ```
 
-Number of ITU observations
+And noted that the number of Gallup respondents decreases with age:
 
 ```{r}
-itu %>% 
+gwp %>% 
+  # filter(age %in% c("15 to 19", "50 to 54", "85 to 89")) %>% 
+  group_by(age) %>% 
   summarise(
-    internet = sum(!is.na(internet)),
-    mobile = sum(!is.na(mobile))
-  )
+    n = quantile(n, probs = c(.1, .5, .9)),
+    quantile = c("10%", "50%", "90%")
+  ) %>% 
+  pivot_wider(names_from = quantile, values_from = n) %>% 
+  kbl(caption = "Quantiles of numbers of observations per age group") %>% 
+  kable_custom()
 ```
 
+## ITU summary table
+
+Here is a table summarising the ITU internet predictor over time to region average percentage and number of coutries.
+
+```{r itu-summary-table}
+#| column: page-right
+#| tbl-cap: "Mean internet user percentages across regions and time."
+#| label: tbl-itusummary
+
+itu %>%
+  select(region, country, year, internet) %>%
+  mutate(internet = internet * 100) %>%
+  pivot_wider(names_from = year, values_from = internet) %>%
+  select(-country) %>%
+  tbl_summary(
+    by = region,
+    missing = "no",
+    statistic = list(all_continuous() ~ "{mean}% ({N_nonmiss})")
+  ) %>%
+  add_overall(col_label = "Total") %>%
+  as_kable_extra(caption = "ITU summary") %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_custom()
+```
 
 ## Data figure
 
-```{r trends-regions}
-#| echo: false
-#| fig-width: 12
+:::{.panel-tabset .column-body-outset-right}
+
+### Static
+
+```{r trends-regions, message = FALSE}
+#| fig-width: 10
 #| fig-height: 8
 #| fig-cap: "Trends in all variables across regions"
 #| label: fig-trends-regions
@@ -106,7 +152,7 @@ itu <- read_rds("data/itu.rds") %>%
   select(
     region, country, year,
     Internet = internet,
-    Mobile = mobile
+    Mobile = mobile,
   ) %>%
   # Truncate mobile percentages for figure
   mutate(Mobile = if_else(Mobile > 1.5, NaN, Mobile)) %>%
@@ -135,9 +181,89 @@ tmp_world <- tmp_country %>%
   mutate(region = "World") %>% 
   mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo)))
 
-tmp_country %>%
+p1 <- tmp_country %>%
   mutate(year = make_date(year)) %>%
   ggplot(aes(year, mean)) +
+  scale_y_continuous(
+    "Value (%)",
+    # Display percentages
+    labels = ~. * 100,
+    breaks = pretty_breaks(),
+    expand = expansion(.05)
+  ) +
+  scale_x_date(
+    "Year",
+    breaks = make_date(c(2005, 2010, 2015, 2020)),
+    date_labels = "'%y",
+    expand = expansion(.02)
+  ) +
+  geom_line(
+    aes(
+      group = interaction(country, outcome), 
+      text = str_glue("{country} {year(year)} ({percent(mean)})")
+    ),
+    alpha = .45, size = .3, color = "dodgerblue1"
+  ) +
+  # geom_line(
+  #   data = tmp_region %>% mutate(year = make_date(year)),
+  #   aes(
+  #     y = .fitted, 
+  #     group = interaction(region, outcome),
+  #     text = str_glue("{region} {year(year)} ({percent(.fitted)})")
+  #   ),
+  #   alpha = 1, size = .6, color = "dodgerblue4"
+  # ) +
+  # geom_line(
+  #   data = tmp_world %>% mutate(year = make_date(year)),
+  #   aes(
+  #     y = .fitted, 
+  #     group = interaction(region, outcome),
+  #     text = str_glue("{region} {year(year)} ({percent(.fitted)})")
+  #   ),
+  #   alpha = 1, size = .8, color = "dodgerblue4"
+  # ) +
+  facet_grid(
+    outcome ~ region,
+    scales = "free_y",
+    labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
+  ) +
+  theme(
+    # aspect.ratio = 1,
+    legend.position = "none",
+    panel.spacing.x = unit(4, "pt"),
+    panel.spacing.y = unit(6, "pt")
+  )
+p1
+```
+
+```{r include = FALSE}
+agg_png(
+  "figures/Trends-data.png",
+  width = W, height = W*0.85, units = "in", res = 300
+)
+p1
+dev.off()
+```
+
+### Interactive
+
+```{r out.height = 860}
+#| fig-cap: "Trends in all variables across regions. Hover over years to show the country's name."
+#| label: fig-trends-regions-i
+gp <- ggplotly(p1, tooltip = "text")
+gp %>% 
+  layout(
+    margin = list(t = 30, r = 20, b = 40, l = 30),
+    width = 840, height = 840
+    )
+```
+
+### HDI
+
+```{r fig.height = 1.8}
+read_rds("data/itu.rds") %>% 
+  mutate(year = make_date(year)) %>%
+  ggplot(aes(year, hdi)) +
   scale_y_continuous(
     "Value",
     labels = ~percent(., .1),
@@ -151,35 +277,25 @@ tmp_country %>%
     expand = expansion(.02)
   ) +
   geom_line(
-    aes(group = interaction(country, outcome)),
-    alpha = .25, size = .4, color = "dodgerblue1"
+    aes(
+      group = country, 
+      text = str_glue("{country} {year(year)} ({hdi})")
+    ),
+    alpha = .45, size = .3, color = "dodgerblue1"
   ) +
-  geom_line(
-    data = tmp_region %>% mutate(year = make_date(year)),
-    aes(y = .fitted, group = interaction(region, outcome)),
-    alpha = 1, size = .6, color = "dodgerblue4"
-  ) +
-  geom_line(
-    data = tmp_world %>% mutate(year = make_date(year)),
-    aes(y = .fitted, group = interaction(region, outcome)),
-    alpha = 1, size = .8, color = "dodgerblue4"
-  ) +
-  facet_grid(
-    outcome ~ region,
+  facet_wrap(
+    ~ region,
     scales = "free_y",
+    nrow = 1,
     labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
   ) +
   theme(
-    aspect.ratio = 1,
+    # aspect.ratio = 1,
     legend.position = "none",
     panel.spacing.x = unit(4, "pt"),
     panel.spacing.y = unit(6, "pt"),
     axis.title.y = element_blank()
   )
-agg_png(
-  "figures/Fig-trends-data.png",
-  width = W, height = W*0.8, units = "in", res = 400
-)
-last_plot()
-dev.off()
 ```
+
+:::
