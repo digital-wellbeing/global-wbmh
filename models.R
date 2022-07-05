@@ -21,8 +21,8 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   threads = min(ncores %/% nchains, 3),
-  iter = 2500,
-  warmup = 1250,
+  iter = 4000,
+  warmup = 2000,
   refresh = 100,
   adapt_delta = .95,
   max_treedepth = 10
