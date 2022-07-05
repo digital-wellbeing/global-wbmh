@@ -31,6 +31,14 @@ hmc <- list(
 # Create directory for intermediate files
 dir.create("models", FALSE)
 
+# Save models to $DATA on HPC
+path <- Sys.getenv("DATA")
+path <- ifelse(
+  path == "",
+  "models",
+  Sys.getenv("DATA")
+)
+
 # Load data
 dat <- readRDS("data/data-all.rds")
 
@@ -139,7 +147,7 @@ fits <- fits %>%
 
 hmc$data <- fits$data[[cmdargs]]
 hmc$formula <- fits$bfrm[[cmdargs]]
-hmc$file <- str_glue("models/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
+hmc$file <- str_glue("{path}/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
 
 cat("\n\nNow fitting", hmc$file, "\n\n")
 
