@@ -55,16 +55,18 @@ y_i &\sim \text{Normal}(\mu_i, \sigma^{y2}v_i) \\
 \mu_i &= \alpha_{0} + \beta_{0\text{country}[i]} + \gamma_{0\text{age}[i]} + \delta_{0\text{age:country}[i]} + \\ 
 &(\alpha_{1} + \beta_{1\text{country}[i]} + \gamma_{1\text{age}[i]} + \delta_{1\text{age:country}[i]})\text{Time}_i + \\
 &(\alpha_{2} + \beta_{2\text{country}[i]} + \gamma_{2\text{age}[i]} + \delta_{2\text{age:country}[i]})\text{Sex}_i + \\
-&(\alpha_{3} + \beta_{3\text{country}[i]} + \gamma_{3\text{age}[i]} + \delta_{3\text{age:country}[i]})\text{Sex}_i \times \text{Time}_i \\
-&(\alpha_{4} + \beta_{4\text{country}[i]} + \gamma_{4\text{age}[i]} + \delta_{4\text{age:country}[i]})\text{Internet}^{\text{t-1}}_i \\
-&(\alpha_{5} + \beta_{5\text{country}[i]} + \gamma_{5\text{age}[i]} + \delta_{5\text{age:country}[i]})\text{Sex}_i \times \text{Internet}^{\text{t-1}}_i \\
+&(\alpha_{3} + \beta_{3\text{country}[i]} + \gamma_{3\text{age}[i]} + \delta_{3\text{age:country}[i]})\text{Sex}_i \times \text{Time}_i + \\
+&(\alpha_{4} + \beta_{4\text{country}[i]} + \gamma_{4\text{age}[i]} + \delta_{4\text{age:country}[i]})\text{Internet}^{\text{t-1}}_i + \\
+&(\alpha_{5} + \beta_{5\text{country}[i]} + \gamma_{5\text{age}[i]} + \delta_{5\text{age:country}[i]})\text{Sex}_i \times \text{Internet}^{\text{t-1}}_i + \\
+&\alpha_6 \text{Internet}^{\text{t-1[CB]}}_i
+\\
 \pmb{\beta} &\sim MVN(\pmb{0}, \Sigma^\text{country}) \\
 \pmb{\gamma} &\sim MVN(\pmb{0}, \Sigma^\text{age}) \\
 \pmb{\delta} &\sim MVN(\pmb{0}, \Sigma^\text{age:country})
 \end{align}
 $$ {#eq-model2}
 
-Where $\text{Internet}^{\text{t-1}}_i$ is the within-country centered 1-year-lagged internet user proportion (or mobile subscriptions).
+Where $\text{Internet}^{\text{t-1}}_i$ is the within-country centered 1-year-lagged internet user proportion (or mobile subscriptions). $\text{Internet}^{\text{t-1[CB]}}_i$ are the between-country centered values.
 
 ## Model checking and parameters
 
