@@ -18,6 +18,6 @@ diagnostics/
 figures/
 
 /.quarto/
-*_cache/
+*cache/
 *_files/
 *_freeze/
