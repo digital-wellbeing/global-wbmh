@@ -147,7 +147,7 @@ opts_chunk$set(
 kable_custom <- function(x) {
   kable_classic(
     kable_input = x,
-    html_font = Font,
+    html_font = "Arial",
     font_size = 13,
     position = "center",
     full_width = FALSE
@@ -1386,22 +1386,42 @@ percent2 <- function(x, accuracy = .1) {
   x
 }
 
+# Function to align positive and negative values
+number2 <- function(x, accuracy = .001, pad = FALSE) {
+  out <- number(
+    x,
+    accuracy = accuracy,
+    style_negative = "minus"
+    )
+  
+  # Justify on decimal point
+  if (pad) {
+    # Add white space to start of non-negative numbers
+    out[str_starts(out, "[0-9]")] <- str_c(
+      "<code style='background:white'> </code>", 
+      out[str_starts(out, "[0-9]")]
+    )
+  }
+  out
+  
+}
+
 # Then display the table
 tab %>% 
   filter(Country == "World") %>% 
   # Create a result string for table
   mutate(
     raw_result = str_glue(
-      "{number(raw_mean, .001)}
-      [{number(raw_low, .001)}, 
-      {number(raw_high, .001)}] 
-      ({percent2(pd, .1)})"
+      "{number2(raw_mean, pad = TRUE)}
+      [{number2(raw_low)}, 
+      {number2(raw_high)}] 
+      ({percent2(pd)})"
     ),
     scaled_result = str_glue(
-      "{number(scaled_mean, .001)} 
-      [{number(scaled_low, .001)}, 
-      {number(scaled_high, .001)}] 
-      ({percent2(rope, .1)})"
+      "{number2(scaled_mean, pad = TRUE)} 
+      [{number2(scaled_low)}, 
+      {number2(scaled_high)}] 
+      ({percent2(rope)})"
     ),
     # ROPE doesn't make sense for change over time (it is ROPE)
     scaled_result = if_else(Predictor == "Time", "", as.character(scaled_result))
@@ -1416,7 +1436,7 @@ tab %>%
     Predictor = as.character(Predictor),
     Predictor = if_else(Outcome == "Life satisfaction", Predictor, "")
   ) %>% 
-  kbl() %>% 
+  kable(escape = FALSE) %>% 
   kable_custom() %>% 
   column_spec(1, bold = TRUE) %>% 
   footnote(
@@ -1575,7 +1595,9 @@ cor_sum %>%
   unnest(value) %>% 
   filter(str_detect(Parameter, "cor_")) %>% 
   mutate(
-    across(Mean:CI_high, ~number(., .01)), pd = percent2(pd, .1)
+    Mean = number2(Mean, .01, pad = TRUE),
+    across(CI_low:CI_high, ~number(., .01)), 
+    pd = percent2(pd, .1)
   ) %>% 
   transmute(
     Predictor = str_to_title(Predictor),
@@ -1591,7 +1613,7 @@ cor_sum %>%
   mutate(
     Correlation = if_else(Outcome == "Life satisfaction", Correlation, "")
   ) %>% 
-  kbl() %>% 
+  kbl(escape = FALSE) %>% 
   kable_custom() %>% 
   column_spec(1, bold = TRUE) %>% 
   footnote(
