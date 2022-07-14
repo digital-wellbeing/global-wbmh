@@ -875,6 +875,21 @@ itu %>%
   kable_custom()
 ```
 
+```{r itu-aggregates}
+#| tbl-cap: "ITU's reported percentages of World's individuals using the internet"
+#| label: tbl-ituworld
+
+if (!file.exists(here("data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx"))) {
+  download.file("https://www.itu.int/en/ITU-D/Statistics/Documents/facts/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", here("data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx"))
+}
+# Individuals using the internet per 100 inhabitants | World
+tmp <- read_excel("data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", range = "T85:AI86")
+tmp %>% 
+  kbl() %>% 
+  kable_custom()
+```
+
+
 ## Figure 1
 
 This figure shows the timeseries of each country's key variables (aggregated over sex and age for outcomes).
