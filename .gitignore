@@ -6,15 +6,10 @@
 .DS_Store
 
 data-raw/*
-!data-raw/Regions/
 !data-raw/GBD/
 !data-raw/gwp-MOCK.rds
-output/
-docs/
 models*/
 data/
-**/*.docx
-diagnostics/
 figures/
 
 /.quarto/
