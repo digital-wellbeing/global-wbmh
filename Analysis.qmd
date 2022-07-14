@@ -1,7 +1,7 @@
 ---
-title: Global mental health and well-being in the internet age
+title: Global well-being and mental health in the internet age
 description: | 
-  Online analysis supplement to "Global mental health and well-being in the internet age (Vuorre & Przybylski, 2022)"
+  Online analysis supplement to [*Global well-being and mental health in the internet age*](preprint url) (Vuorre & Przybylski, 2022)
 author:
   - name: Matti Vuorre
     affiliation: University of Oxford
@@ -24,12 +24,12 @@ format:
     self-contained: true
     self-contained-math: false
 editor_options: 
-  chunk_output_type: inline
+  chunk_output_type: console
 ---
 
 # Preface
 
-Welcome! This document is the online analysis supplement to *Global mental health and well-being in the internet age* (Vuorre & Przybylski, [submitted]()). It contains all the analyses reported in the manuscript along with supplemental figures and data. The data and source code are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [OSF](https://osf.io/ys7m9/).
+This document is the online analysis supplement to *Global well-being and mental health in the internet age* (Vuorre & Przybylski, [submitted]()). It contains all the analyses reported in the manuscript along with supplemental analyses. The data and source code are on [GitHub](https://github.com/digital-wellbeing/global-wbmh), and an archived permanent copy of these are on [Zenodo]().
 
 ## How to reproduce our results
 
