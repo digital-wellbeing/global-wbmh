@@ -4,14 +4,12 @@ This repository ([GitHub](https://github.com/digital-wellbeing/global-wbmh) / [O
 
 ## Materials
 
-- [Preprint]()  
+- [Preprint](https://doi.org/10.31234/osf.io/9tbjy)  
   - A publicly available version of our manuscript in advance of peer-review and formal publication
 - [GitHub repository](https://github.com/digital-wellbeing/global-wbmh)  
   - A version controlled repository containing all the raw data and code in this project
-- [Zenodo repository]()  
+- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7004054.svg)](https://doi.org/10.5281/zenodo.7004054)
   - An archived permanent copy of the GitHub repository
-- [Online analysis supplement](https://digital-wellbeing.github.io/global-wbmh)
-  - The output document of our analyses
 
 ## Reproducibility
 
