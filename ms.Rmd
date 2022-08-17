@@ -83,6 +83,7 @@ output:
     number_sections: false
 editor_options: 
   chunk_output_type: console
+always_allow_html: true
 ---
 
 ```{r setup, include = FALSE}
@@ -116,6 +117,7 @@ library(ggstance)
 library(tidybayes)
 library(ggdist)
 library(DT)
+library(htmlwidgets)
 library(tidyverse)
 
 opts_chunk$set(
@@ -137,8 +139,9 @@ oo <- c(
 fits <- tibble(outcome = oo) %>%
   mutate(outcome = factor(outcome, levels = oo))
 
-# Create directory for intermediate files
+# Create directory for intermediate and output files
 dir.create(here("data"), FALSE)
+dir.create(here("Output"), FALSE)
 
 # Cache for memoised functions
 cd <- cache_disk("cache", max_size = Inf)
@@ -1183,7 +1186,7 @@ ggplotly(p1, tooltip = "text") %>%
   layout(
     margin = list(t = 100, r = 100, b = 100, l = 100)
   ) %>% 
-  htmlwidgets::saveWidget("Figure-1-interactive.html")
+  saveWidget("Output/Figure-1.html")
 ```
 
 Figure \@ref(fig:figure-1) describes these data: Countries’ yearly rates of per capita internet users and mobile broadband subscriptions, and six indicators of psychological well-being and mental health (the latter two averaged over sex and age). Figure \@ref(fig:figure-1) shows the universal global penetration of internet technologies in the past two decades, and suggests that in contrast, changes in well-being and mental health are likely to be small or mixed across countries.
@@ -1784,7 +1787,7 @@ left_join(t1, t2, by = c("Predictor", "Outcome"), suffix = c("", " ")) %>%
     col_spanners = list("Sign test" = c(3, 5), "ROPE test" = c(6, 9))
   )
 
-# Save interactive table to country-table.html
+# Save interactive table
 tab %>% 
   mutate(
     Country = relevel(factor(Country), ref = "World"),
@@ -1793,7 +1796,7 @@ tab %>%
   ) %>% 
   datatable(filter = "top", rownames = FALSE) %>% 
   formatRound(4:12, 3) %>% 
-  saveWidget("country-table.html", title = "Country-specific parameters")
+  saveWidget("Output/Table-S2.html", title = "Country-specific parameters")
 ```
 
 Another way in which this variability can be summarised is to calculate proportions of countries where the association between internet adoption / mobile broadband adoption and well-being / mental health was credible negative, positive, or neither (null), or whether it was credibly outside the region of practical equivalence (ROPE) to zero as defined by the simple linear change in the outcome. The latter test allows quantifying evidence for four distinct propositions: Support for a credibly negative association, support for a credibly positive association, support for the null hypothesis (of smaller than meaningful association), and not enough support for either of the three alternatives (inconclusive) [@kruschkeBayesianNewStatistics2017]. We present these numbers in Table \@ref(tab:table-s2), which further highlights substantive between-country differences in well-being associations, and the fact that most associations were not credibly positive or negative at the country level—especially for mental health outcomes. Indeed, quantified in this manner, we find the null hypothesis in excess of 95% credibility for 8-15% of countries for the well-being outcomes, and 18-54% of countries for the mental health outcomes.

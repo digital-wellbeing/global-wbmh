@@ -27,14 +27,12 @@ The analyses were conducted in R, and can be reproduced locally:
       OR
   - RStudio: Click renv -> Restore Library in the Packages panel
 
-3. Render the Quarto source file `Analysis.qmd`
- - Install [Quarto](https://quarto.org/docs/getting-started/installation.html) if you don't already have it
-  - Terminal: `quarto render Analysis.qmd`  
+3. Render the source file `ms.Rmd`
+  - Terminal: `Rscript -e 'rmarkdown::render("ms.Rmd")'`  
       OR
-  - RStudio: Open the file and click Render
+  - RStudio: Open the file and click Knit/Render
 
 If you encounter problems, please [open an issue](https://github.com/digital-wellbeing/global-wbmh/issues).
 
 
->The project repo includes the GBD dataset, code to download the ITU dataset, and a synthetic mock version of the GWP dataset to enable reproducing all our computations.
-**The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason, the build will fail after having cleaned the data. Then, run `models.R` with settings specific to your environment/cluster. Once that is done you can render the document again and it should work.
+The project repo includes the GBD dataset, code to download the ITU dataset, and a synthetic mock version of the GWP dataset to enable reproducing all our computations. **The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason, the build will fail after having cleaned the data. Then, run `models.R` with settings specific to your environment/cluster. Once that is done you can render the source file again and it should work.
