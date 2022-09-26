@@ -12,7 +12,5 @@ models*/
 data/
 figures/
 
-/.quarto/
 *cache/
 *_files/
-*_freeze/
