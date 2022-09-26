@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Runs the R script models.R with arguments from --array
-# Use sbatch --array=1-24 submit.sh to submit
+# Submit on cluster with: sbatch --array=1-18 submit.sh
 
 #SBATCH --constraint='cpu_frq:2.90GHz'
 #SBATCH --cpus-per-task=12

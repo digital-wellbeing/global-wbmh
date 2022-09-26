@@ -1,10 +1,10 @@
 # Independent script to fit models
 
-# command line argument must be 1-24 to pick a model from the combinations
+# command line argument must be 1-18 to pick a model from the combinations
 # of outcomes (6) and models (4)
 cmdargs <- commandArgs(trailingOnly = TRUE)
 cmdargs <- as.numeric(cmdargs)
-if (length(cmdargs) == 0) cmdargs <- menu(c(1:24, "Abort"), "Choose model")
+if (length(cmdargs) == 0) cmdargs <- menu(c(1:18, "Abort"), "Choose model")
 
 # ---- setup ---------------------------------------------------------------
 
@@ -16,16 +16,16 @@ library(brms)
 # MCMC settings
 (ncores <- min(parallel::detectCores(logical = FALSE), 12))
 nchains <- 4
-options(brms.backend = "cmdstanr")
+options(brms.backend = "rstan")
 hmc <- list(
+  save_pars = save_pars(c("age", "country")),
   chains = nchains,
   cores = nchains,
-  threads = min(ncores %/% nchains, 3),
+  # threads = min(ncores %/% nchains, 3),
   iter = 4000,
   warmup = 2000,
   refresh = 100,
-  adapt_delta = .95,
-  max_treedepth = 10
+  control = list(adapt_delta = .95, max_treedepth = 10)
 )
 
 # Create directory for intermediate files
@@ -54,88 +54,65 @@ fits <- dat %>%
 
 # models ------------------------------------------------------------------
 
-# Bivariate internet & outcome on time
-bf_itu <- bf(
-  internet | subset(itu) ~
-    year +
-    (year |c| country),
-  family = gaussian()
-)
-bf_val <- bf(
+# Time only
+bf_t <- bf(
   val | se(se, sigma = TRUE) + subset(!is.na(val)) ~
     year * sex +
-    (year * sex | c | country) +
+    (year * sex | country) +
     (year * sex | age) +
     (year * sex | age:country),
   family = gaussian()
 )
-# Model for well-being outcomes
-bf_1 <- bf_itu +
-  bf_val +
-  set_rescor(FALSE)
 # Simplified model for mental health outcomes
-bf_1.s <- bf_itu +
-  update(bf_val, ~ . -(year * sex | age:country)) +
-  set_rescor(FALSE)
-
-# Bivariate mobile & outcome on time
-bf_mobile <- bf(
-  mobile | subset(itum) ~
-    year +
-    (year |c| country)
-)
-bf_2 <- bf_mobile +
-  bf_val +
-  set_rescor(FALSE)
-bf_2.s <- bf_mobile +
-  update(bf_val, ~ . -(year * sex | age:country)) +
-  set_rescor(FALSE)
+# bf_t.s <- update(bf_t, ~ . -(year * sex | age:country))
 
 # Univariate outcome on time and internet
-bf_3 <- bf(
+bf_i <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + i1_cw) * sex + i1_cb +
-    ((year + i1_cw) * sex | country) +
-    ((year + i1_cw) * sex | age) +
-    ((year + i1_cw) * sex | age:country),
+    (year + i_cw) * sex + i_cb +
+    ((year + i_cw) * sex | country) +
+    ((year + i_cw) * sex | age) +
+    ((year + i_cw) * sex | age:country),
   family = gaussian()
 )
-bf_3.s <- update(bf_3, ~ . -((year + i1_cw) * sex | age:country))
+# bf_i.s <- update(bf_i, ~ . -((year + i_cw) * sex | age:country))
 
 # Univariate outcome on time and mobile
-bf_4 <- bf(
+bf_m <- bf(
   val | se(se, sigma = TRUE) ~
-    (year + m1_cw) * sex + m1_cb +
-    ((year + m1_cw) * sex | country) +
-    ((year + m1_cw) * sex | age) +
-    ((year + m1_cw) * sex | age:country),
+    (year + m_cw) * sex + m_cb +
+    ((year + m_cw) * sex | country) +
+    ((year + m_cw) * sex | age) +
+    ((year + m_cw) * sex | age:country),
   family = gaussian()
 )
-bf_4.s <- update(bf_4, ~ . -((year + m1_cw) * sex | age:country))
+# bf_m.s <- update(bf_m, ~ . -((year + mm_cw) * sex | age:country))
 
+# Pick the row to fit
 fits <- fits %>%
-  crossing(nesting(bfrm = list(bf_1, bf_2, bf_3, bf_4), model = 1:4))
+  crossing(nesting(bfrm = list(bf_t, bf_i, bf_m), model = 1:3)) %>%
+  slice(cmdargs)
 
 # Simplify models for mental health outcomes
-MH <- c("Anxiety", "Depression", "Selfharm")
-fits <- fits %>%
-  mutate(
-    bfrm = case_when(
-      outcome %in% MH & model == 1 ~ list(bf_1.s),
-      outcome %in% MH & model == 2 ~ list(bf_2.s),
-      outcome %in% MH & model == 3 ~ list(bf_3.s),
-      outcome %in% MH & model == 4 ~ list(bf_4.s),
-      TRUE ~ bfrm
-    )
-  ) %>%
-  arrange(outcome, model)
+# MH <- c("Anxiety", "Depression", "Selfharm")
+# fits <- fits %>%
+#   mutate(
+#     bfrm = case_when(
+#       outcome %in% MH & model == 1 ~ list(bf_1.s),
+#       outcome %in% MH & model == 2 ~ list(bf_2.s),
+#       outcome %in% MH & model == 3 ~ list(bf_3.s),
+#       outcome %in% MH & model == 4 ~ list(bf_4.s),
+#       TRUE ~ bfrm
+#     )
+#   ) %>%
+#   arrange(outcome, model)
 
 
 # fit model ---------------------------------------------------------------
 
-hmc$data <- fits$data[[cmdargs]]
-hmc$formula <- fits$bfrm[[cmdargs]]
-hmc$file <- str_glue("{path}/brm-{fits$outcome[[cmdargs]]}-{fits$model[[cmdargs]]}")
+hmc$data <- fits$data[[1]]
+hmc$formula <- fits$bfrm[[1]]
+hmc$file <- str_glue("{path}/brm-{fits$outcome[[1]]}-{fits$model[[1]]}")
 
 cat("\n\nNow fitting", hmc$file, "\n\n")
 
