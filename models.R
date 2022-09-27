@@ -10,7 +10,6 @@ if (length(cmdargs) == 0) cmdargs <- menu(c(1:18, "Abort"), "Choose model")
 
 options(tidyverse.quiet = TRUE)
 library(tidyverse)
-library(cmdstanr)
 library(brms)
 
 # MCMC settings
