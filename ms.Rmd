@@ -47,7 +47,11 @@ authornote: |
   This research was supported by the Huo Family Foundation and Economic and Social Research Council Grant ES/T008709/1. All code supporting this manuscript is available at <https://doi.org/10.5281/zenodo.7004053>. This draft is available at <https://doi.org/10.31234/osf.io/9tbjy>.
 
 abstract: | 
-  In the last two decades the rise of internet technologies have impacted nearly all domains of human life and inspired concern that their widespread adoption has had a harmful effect on mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen only small and inconsistent changes in global well-being and mental health. We demonstrate that the broadest available health and internet technology data does not support the idea that the adoption of internet and mobile broadband has been psychologically harmful on a global level. Moreover, little or no negative associations were observed for adolescents—a group thought particularly vulnerable. Further investigation of this topic requires transparent study of online behaviours where they occur: on online communication, media, social media, and video game platforms. We place an urgent call to increase the collaborative efforts between independent scientists and the internet technology sector.
+  
+  \textbf{Abstract.} In the last two decades the rise of internet technologies have impacted nearly all domains of human life and inspired concern that their widespread adoption has had a harmful effect on mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen only small and inconsistent changes in global well-being and mental health. We demonstrate that the broadest available health and internet technology data does not support the idea that the adoption of internet and mobile broadband has been psychologically harmful on a global level. Moreover, little or no negative associations were observed for adolescents—a group thought particularly vulnerable. Further investigation of this topic requires transparent study of online behaviours where they occur: on online communication, media, social media, and video game platforms. We place an urgent call to increase the collaborative efforts between independent scientists and the internet technology sector.
+  
+  \textbf{Statement of Relevance} tbd
+  
 keywords: well-being, mental health, internet technology, technology effects
 # wordcount: 
 bibliography: "references.bib"
@@ -58,19 +62,7 @@ mask: no
 figurelist: no
 tablelist: no
 footnotelist: no
-header-includes:
-  - |
-    \makeatletter
-    \renewcommand{\paragraph}{\@startsection{paragraph}{4}{\parindent}%
-      {0\baselineskip \@plus 0.2ex \@minus 0.2ex}%
-      {-1em}%
-      {\normalfont\normalsize\bfseries\typesectitle}}
-    
-    \renewcommand{\subparagraph}[1]{\@startsection{subparagraph}{5}{1em}%
-      {0\baselineskip \@plus 0.2ex \@minus 0.2ex}%
-      {-\z@\relax}%
-      {\normalfont\normalsize\bfseries\itshape\hspace{\parindent}{#1}\textit{\addperi}}{\relax}}
-    \makeatother
+# header-includes:
 
 csl: "`r system.file('rmd', 'apa7.csl', package = 'papaja')`"
 documentclass: apa7
@@ -81,6 +73,12 @@ output:
     keep_tex: false
   papaja::apa6_docx: 
     number_sections: false
+  bookdown::html_document2:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    code_folding: hide
 editor_options: 
   chunk_output_type: console
 always_allow_html: true
@@ -91,12 +89,9 @@ always_allow_html: true
 library(papaja)
 library(readxl)
 library(imputeTS)
-library(naniar)
 library(scales)
 library(janitor)
 library(haven)
-library(ragg)
-library(khroma)
 library(labelled)
 library(countrycode)
 library(plotly)
@@ -105,25 +100,17 @@ library(kableExtra)
 library(brms)
 library(knitr)
 library(here)
-library(posterior)
 library(bayestestR)
-library(gtsummary)
-library(kableExtra)
-library(memoise)
-library(cachem)
 library(ggh4x)
-library(cmdstanr)
-library(ggstance)
 library(tidybayes)
 library(ggdist)
 library(DT)
-library(htmlwidgets)
 library(tidyverse)
 
 opts_chunk$set(
   eval = TRUE,
   cache = TRUE,
-  include = FALSE,
+  include = knitr::is_html_output(),  # Show code only in HTML
   warning = FALSE,
   dpi = 300,
   fig.align = "center"
@@ -131,26 +118,13 @@ opts_chunk$set(
 # For tables: Show NAs as blanks
 options(knitr.kable.NA = '')
 
-# Data frame for computing over models
-oo <- c(
-  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
-  "Anxiety", "Depression", "Selfharm"
-)
-fits <- tibble(outcome = oo) %>%
-  mutate(outcome = factor(outcome, levels = oo))
-
-# Create directory for intermediate and output files
+# Create directory for intermediate files
 dir.create(here("data"), FALSE)
-dir.create(here("Output"), FALSE)
-
-# Cache for memoised functions
-cd <- cache_disk("cache", max_size = Inf)
 
 # Plotting options
-# If you've defined a custom font, we will use it in outputs
 theme_set(
   theme_linedraw(
-    base_size = 8
+    base_size = 10
   ) +
     theme(
       panel.grid = element_blank(),

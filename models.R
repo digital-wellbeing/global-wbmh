@@ -8,8 +8,8 @@ if (length(cmdargs) == 0) cmdargs <- menu(c(1:18, "Abort"), "Choose model")
 
 # ---- setup ---------------------------------------------------------------
 
-options(tidyverse.quiet = TRUE)
-library(tidyverse)
+library(dplyr)
+library(tidyr)
 library(brms)
 
 # MCMC settings
@@ -111,7 +111,7 @@ fits <- fits %>%
 
 hmc$data <- fits$data[[1]]
 hmc$formula <- fits$bfrm[[1]]
-hmc$file <- str_glue("{path}/brm-{fits$outcome[[1]]}-{fits$model[[1]]}")
+hmc$file <- paste0(path, "/brm-", fits$outcome[[1]], "-", fits$model[[1]])
 
 cat("\n\nNow fitting", hmc$file, "\n\n")
 
