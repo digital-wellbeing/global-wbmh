@@ -993,6 +993,19 @@
         "withr"
       ]
     },
+    "ggstance": {
+      "Package": "ggstance",
+      "Version": "0.3.5",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "2fed8b95e6159315d5a024a2e28d07c4",
+      "Requirements": [
+        "ggplot2",
+        "plyr",
+        "rlang",
+        "withr"
+      ]
+    },
     "ggtext": {
       "Package": "ggtext",
       "Version": "0.1.2",
