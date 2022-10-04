@@ -21,8 +21,8 @@ hmc <- list(
   chains = nchains,
   cores = nchains,
   # threads = min(ncores %/% nchains, 3),
-  iter = 4000,
-  warmup = 2000,
+  iter = 3000,
+  warmup = 1500,
   refresh = 100,
   control = list(adapt_delta = .95, max_treedepth = 10)
 )
@@ -63,7 +63,7 @@ bf_t <- bf(
   family = gaussian()
 )
 # Simplified model for mental health outcomes
-# bf_t.s <- update(bf_t, ~ . -(year * sex | age:country))
+bf_t.s <- update(bf_t, ~ . -(year * sex | age:country))
 
 # Univariate outcome on time and internet
 bf_i <- bf(
@@ -74,7 +74,7 @@ bf_i <- bf(
     ((year + i_cw) * sex | age:country),
   family = gaussian()
 )
-# bf_i.s <- update(bf_i, ~ . -((year + i_cw) * sex | age:country))
+bf_i.s <- update(bf_i, ~ . -((year + i_cw) * sex | age:country))
 
 # Univariate outcome on time and mobile
 bf_m <- bf(
@@ -85,7 +85,7 @@ bf_m <- bf(
     ((year + m_cw) * sex | age:country),
   family = gaussian()
 )
-# bf_m.s <- update(bf_m, ~ . -((year + mm_cw) * sex | age:country))
+bf_m.s <- update(bf_m, ~ . -((year + mm_cw) * sex | age:country))
 
 # Pick the row to fit
 fits <- fits %>%
@@ -93,18 +93,17 @@ fits <- fits %>%
   slice(cmdargs)
 
 # Simplify models for mental health outcomes
-# MH <- c("Anxiety", "Depression", "Selfharm")
-# fits <- fits %>%
-#   mutate(
-#     bfrm = case_when(
-#       outcome %in% MH & model == 1 ~ list(bf_1.s),
-#       outcome %in% MH & model == 2 ~ list(bf_2.s),
-#       outcome %in% MH & model == 3 ~ list(bf_3.s),
-#       outcome %in% MH & model == 4 ~ list(bf_4.s),
-#       TRUE ~ bfrm
-#     )
-#   ) %>%
-#   arrange(outcome, model)
+MH <- c("Anxiety", "Depression", "Selfharm")
+fits <- fits %>%
+  mutate(
+    bfrm = case_when(
+      outcome %in% MH & model == 1 ~ list(bf_t.s),
+      outcome %in% MH & model == 2 ~ list(bf_i.s),
+      outcome %in% MH & model == 3 ~ list(bf_m.s),
+      TRUE ~ bfrm
+    )
+  ) %>%
+  arrange(outcome, model)
 
 
 # fit model ---------------------------------------------------------------
