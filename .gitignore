@@ -10,7 +10,7 @@ data-raw/*
 !data-raw/gwp-MOCK.rds
 models*/
 data/
-figures/
+diagnostics/
 
 *cache/
 *_files/

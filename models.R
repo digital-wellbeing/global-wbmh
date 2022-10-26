@@ -13,17 +13,15 @@ library(tidyr)
 library(brms)
 
 # MCMC settings
-(ncores <- min(parallel::detectCores(logical = FALSE), 12))
-nchains <- 4
 options(brms.backend = "rstan")
 hmc <- list(
-  save_pars = save_pars(c("age", "country")),
-  chains = nchains,
-  cores = nchains,
-  # threads = min(ncores %/% nchains, 3),
-  iter = 3000,
-  warmup = 1500,
+  save_pars = save_pars(group = c("age", "country")),
+  chains = 4,
+  cores = 4,
+  iter = 4000,
+  warmup = 2000,
   refresh = 100,
+  init = 0,
   control = list(adapt_delta = .95, max_treedepth = 10)
 )
 
@@ -85,7 +83,7 @@ bf_m <- bf(
     ((year + m_cw) * sex | age:country),
   family = gaussian()
 )
-bf_m.s <- update(bf_m, ~ . -((year + mm_cw) * sex | age:country))
+bf_m.s <- update(bf_m, ~ . -((year + m_cw) * sex | age:country))
 
 # Pick the row to fit
 fits <- fits %>%
@@ -105,11 +103,46 @@ fits <- fits %>%
   ) %>%
   arrange(outcome, model)
 
+# Priors
+p1 <- prior(normal(0, 1), class = "b") +
+  prior(normal(0, 3), class = "b", coef = "sex1")
+p2 <- prior(normal(0, 1), class = "b") +
+  prior(normal(0, 3), class = "b", coef = "sex1") +
+  prior(normal(0, 0.5), class = "sd", coef = "i_cw", group = "age") +
+  prior(lkj(1), class = "cor", group = "age")
+p3 <- prior(normal(0, 1), class = "b") +
+  prior(normal(0, 3), class = "b", coef = "sex1") +
+  prior(normal(0, 0.5), class = "sd", coef = "m_cw", group = "age") +
+  prior(lkj(1), class = "cor", group = "age")
+
+
+# Center predictors -------------------------------------------------------
+
+# Centering predictors within and between countries
+fits$data[[1]] <- fits$data[[1]] %>%
+  drop_na(val) %>%
+  rename(i = internet, m = mobile) %>%
+  group_by(country) %>%
+  mutate(
+    # Between
+    i_cb = mean(i, na.rm = TRUE),
+    m_cb = mean(m, na.rm = TRUE),
+    # Within
+    i_cw = i - i_cb,
+    m_cw = m - m_cb
+  ) %>%
+  ungroup() %>%
+  # Grand mean center between-country deviations
+  mutate(
+    across(c(i_cb, m_cb), ~. - mean(., na.rm = TRUE)),
+  )
+
 
 # fit model ---------------------------------------------------------------
 
 hmc$data <- fits$data[[1]]
 hmc$formula <- fits$bfrm[[1]]
+hmc$prior <- list(p1, p2, p3)[[fits$model]]
 hmc$file <- paste0(path, "/brm-", fits$outcome[[1]], "-", fits$model[[1]])
 
 cat("\n\nNow fitting", hmc$file, "\n\n")
