@@ -18,7 +18,7 @@ affiliation:
 authornote: |
   \noindent \textbf{This pre-print is not yet peer-reviewed.}
 abstract: | 
-  In the last two decades the rise of internet technologies have impacted nearly all domains of human life and inspired concern that their widespread adoption has impacted mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen small and inconsistent changes in global well-being and mental health. The broadest available health and internet technology data does not support the idea that the adoption of internet and mobile broadband is consistently linked to negative psychological outcomes. However, associations between internet technology adoption and depression and self-harm were strongest for individuals aged between 10 and 34. Further investigation of this topic requires transparent study of online behaviours where they occur, namely on online platforms. We call for increased collaborative efforts between independent scientists and the internet technology sector.
+  In the last two decades the rise of internet technologies have impacted nearly all domains of human life and inspired concern that their widespread adoption has impacted mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen small and inconsistent changes in global well-being and mental health. The broadest available health and internet technology data does not support the idea that the adoption of internet and mobile broadband is consistently linked to negative psychological outcomes. However, associations between internet technology adoption and depression and self-harm were strongest (albeit still small) for individuals aged between 10 and 34. Further investigation of this topic requires transparent study of online behaviours where they occur, namely on online platforms. We call for increased collaborative efforts between independent scientists and the internet technology sector.
   
 keywords: well-being, mental health, internet technology, technology effects
 wordcount: '`r scales::number(wordcountaddin:::word_count("ms.Rmd"), big.mark = ",")`'
@@ -531,7 +531,7 @@ Life satisfaction in the moment was measured with one 11-step Likert item, "Plea
 
 ### Data analysis
 
-We analysed the data with meta-analytic bayesian hierarchical regression models [@burknerBrmsPackageBayesian2017; @gelmanDataAnalysisUsing2007; @standevelopmentteamStanModelingLanguage2021]. We first asked how the well-being outcomes had changed over time. To answer, we modelled each outcome (e.g. life satisfaction) on population level intercepts (we centred time on 2010), contrasts of time (in continuous years), sex (Female: 1, Male: -1), and their interaction. We allowed all coefficients to vary across countries, age groups, and the age by country interactions, and treated all outcomes as normally distributed.
+We analysed the data with meta-analytic bayesian hierarchical regression models [@burknerBrmsPackageBayesian2017; @gelmanDataAnalysisUsing2007; @standevelopmentteamStanModelingLanguage2021]. We first asked how the well-being outcomes had changed over time. Bayesian methods are especially suitable to our reserch questions, because they involve many potential contrasts between e.g. countries and ages. Using bayesian hierarchical models allowed us to accurately quantify uncertainty at different levels of analyses while avoiding problems with multiple comparisons (see below). To answer, we modelled each outcome (e.g. life satisfaction) on population level intercepts (we centred time on 2010), contrasts of time (in continuous years), sex (Female: 1, Male: -1), and their interaction. We allowed all coefficients to vary across countries, age groups, and the age by country interactions, and treated all outcomes as normally distributed.
 
 Before modelling the data, we aggregated the individual-level well-being values to means and standard errors for each country-year-age-sex combination, in order to facilitate the Hamiltonian Monte Carlo computations on large data, and to harmonise the analyses and inferences between Studies 1 and 2. Importantly, we note that because we modelled unweighted demographic- and country-level data, our unit of analyses are demographic groups within countries, with no adjustment to e.g. countries' population sizes.
 
@@ -566,7 +566,7 @@ where $i$ indexes rows in the data and $\text{se}_i$ are the known standard erro
 
 We used these priors to help model convergence, and on the assumption that differences in well-being between males and females are likely greater than differences associated with years, one-percent increases in technology adoption predictors, or the interaction terms.
 
-Our third research question asked whether any trends in well-being or its associations with internet or mobile broadband adoption were specific to adolescents or other demographic groups. To answer, the model allowed all parameters to vary randomly across the age groups and the age by country interaction. Therefore, each age group, on average and within each country, received their own partially pooled estimates [@gelmanDataAnalysisUsing2007]. This bayesian approach to estimating age-specific associations is beneficial, given that the large number of age groups, especially within countries, would otherwise present difficulties with uncertain estimates and multiple comparisons. Therefore, we could compare younger age groups to older age groups, and investigate other contrasts, with confidence and without additional post-hoc adjustment procedures [@gelmanWhyWeUsually2012]. 
+Our third research question asked whether any trends in well-being or its associations with internet or mobile broadband adoption were specific to adolescents or other demographic groups. To answer, the model allowed all parameters to vary randomly across the age groups and the age by country interaction. Therefore, each age group, on average and within each country, received their own partially pooled estimates [@gelmanDataAnalysisUsing2007]. This bayesian approach to estimating age-specific associations is beneficial, given that the large number of age groups, especially within countries, would otherwise present difficulties with uncertain estimates and multiple comparisons. In addition, bayesian methods allowed quantifying uncertainties at different levels of analysis, rather than providing e.g. only point estimates of country-specific quantities. Therefore, we could compare younger age groups to older age groups, and investigate other contrasts, with confidence and without additional post-hoc adjustment procedures [@gelmanWhyWeUsually2012]. 
 
 We conducted all data analyses with R [@rcoreteamLanguageEnvironmentStatistical2021] and estimated the models using Stan's Hamiltonian Monte Carlo sampling via the brms R package [@burknerBrmsPackageBayesian2017; @standevelopmentteamStanModelingLanguage2021]. We ran 4 HMC chains with 3,000 iterations and first 1,500 as warmup for 6,000 total iterations. We ensured that all population-level parameters' had converged using numeric diagnostics (all Rhats were within 0.01 of 1) and visual inspection of parameters' scatterplot matrices.
 
@@ -720,7 +720,6 @@ tab_wb <- tab_wb %>%
 ```
 
 Figure \@ref(fig:fig-gwp-data)A describes the levels of internet and mobile broadband adoption, and the three well-being variables over time averaged over sex and age. Figure \@ref(fig:fig-gwp-data)A shows the universal global penetration of internet technologies in the past two decades, and suggests that in contrast, changes in well-being are likely to be small.
-
 
 ```{r tab-gwp-estimates}
 avg_wb <- tab_wb %>% 
@@ -932,6 +931,42 @@ itu %>%
 
 Internet adoption did not predict any outcome at the 95% credibility level, but a 1% increase in per capita internet users predicted a `r avg_wb[6, 4]` increase in negative experiences for the average country with `r avg_wb[6, 5]` posterior probability of direction. Mobile broadband, on the other hand, positively predicted life satisfaction (`r avg_wb[10, 4]`), with greater evidence for direction (`r avg_wb[10, 5]`). In light of substantial residual standard deviations ranging from about 6 to 8 between predictors and outcomes, and average yearly increases in internet technology adoption (internet = 2.7%, mobile = 5.8%) the observed associations were very small.
 
+```{r}
+tmpr <- fits_wb %>% 
+  filter(model > 1) %>% 
+  mutate(
+    sdx = map_dbl(fit, ~sd(.x$data[,4])),
+    sdy = map_dbl(fit, ~sd(.x$data[,1]))
+  ) %>% 
+  mutate(
+    x = map(
+      fit, 
+      ~as_draws_df(.x, variable = "b_[i|m]_cw$", regex = TRUE) %>% 
+        rename(b = 1) %>% 
+        mutate(r = b * (sd(.x$data[,4]) / sd(.x$data[,1])), .keep = "unused") %>% 
+        describe_posterior(
+          centrality = "mean", 
+          ci = 0.95, 
+          ci_method = "ETI", 
+          test = "pd",
+          diagnostic = NULL
+        ) %>% 
+        as_tibble())
+  ) %>% 
+  mutate(model = factor(model, labels = c("Internet", "Mobile"))) %>% 
+  unnest(x) %>% 
+  mutate(
+    result = str_glue(
+      "{number(Mean, .001)} [{number(CI_low, .001)}, {number(CI_high, .001)}]"
+    ),
+    .keep = "unused"
+  ) %>% 
+  select(outcome, model, result)
+tmpr
+```
+
+In addition to these recommended raw associations [@baguleyStandardizedSimpleEffect2009], we also computed the standardized average associations ($\alpha_4(\frac{\sigma_x}{\sigma_y})$). In line with the unstandardized coefficients reported above, the standardized associations were small according to common guidelines: (life satisfaction & internet = `r tmpr$result[1]`, life satisfaction & mobile = `r tmpr$result[2]`, negative experiences & internet = `r tmpr$result[3]`, negative experiences & mobile = `r tmpr$result[4]`, positive experiences & internet = `r tmpr$result[5]`, positive experiences & mobile = `r tmpr$result[6]`).
+
 ```{r fig-gwp-country}
 #| cache: false
 figure_country <- function(data) {
@@ -1084,7 +1119,7 @@ figure_demographics <- function(data) {
 p_demo_wb <- figure_demographics(wb_demo)
 ```
 
-Our model also measured the extent to which internet technology adoption predicted well-being between countries. These between-country associations indicated, with high confidence, that countries with greater average levels of internet and mobile broadband adoption tended to report greater average levels of life satisfaction and positive experiences, and lower average levels of negative experiences (Figure \@ref(fig:fig-gwp-data)B, Between-country associations). However, this pattern is likely to reflect multiple other causes impinging on both well-being and internet technology adoption.
+Our model also measured the extent to which internet technology adoption predicted well-being between countries. These between-country associations indicated, with high confidence, that countries with greater average levels of internet and mobile broadband adoption tended to report greater average levels of life satisfaction and positive experiences, and lower average levels of negative experiences (Figure \@ref(fig:fig-gwp-data)B, Between-country associations). However, this pattern is likely to reflect multiple other causes, such as socioeconomic factors and levels of inequality, impinging on both well-being and internet technology adoption. For example while wealthier nations are likely to have greater internet coverage, they also tend to have greater healthcare coverage, which in turn is likely to affect levels of well-being. 
 
 These trends and associations are meaningful summaries of the average country among the `r length(unique(gwp$country))` examined, but do not represent specific countries which might have unique patterns of associations. Figure \@ref(fig:fig-gwp-parameters)A describes the country-level trends over time and associations linking per capita internet users and mobile broadband subscriptions to each of the three outcomes. There appeared to be no universal temporal trends that apply to all countries, whose estimates varied from significant decreases to substantial increases in well-being. Moreover, the associations between internet technology adoption and well-being varied significantly across countries, with some reporting substantial positive associations, and others large negative associations.
 
@@ -1507,6 +1542,42 @@ p2 <- x %>%
 
 Then, to answer our primary research question, we examined the within-country predictive associations between internet technology adoption and mental health. We observed no credible (at the 95% level) associations between internet adoption and either anxiety, depression, or self-harm (Figure \@ref(fig:fig-gbd-data)B). Similarly, per capita mobile broadband subscriptions were not credible predictors of mental health for the average country, although the model indicated `r avg_mh$pd[10]` certainty of a negative association between mobile broadband adoption and rates of anxiety.
 
+```{r}
+tmpr <- fits_mh %>% 
+  filter(model > 1) %>% 
+  mutate(
+    sdx = map_dbl(fit, ~sd(.x$data[,4])),
+    sdy = map_dbl(fit, ~sd(.x$data[,1]))
+  ) %>% 
+  mutate(
+    x = map(
+      fit, 
+      ~as_draws_df(.x, variable = "b_[i|m]_cw$", regex = TRUE) %>% 
+        rename(b = 1) %>% 
+        mutate(r = b * (sd(.x$data[,4]) / sd(.x$data[,1])), .keep = "unused") %>% 
+        describe_posterior(
+          centrality = "mean", 
+          ci = 0.95, 
+          ci_method = "ETI", 
+          test = "pd",
+          diagnostic = NULL
+        ) %>% 
+        as_tibble())
+  ) %>% 
+  mutate(model = factor(model, labels = c("Internet", "Mobile"))) %>% 
+  unnest(x) %>% 
+  mutate(
+    result = str_glue(
+      "{number(Mean, .001)} [{number(CI_low, .001)}, {number(CI_high, .001)}]"
+    ),
+    .keep = "unused"
+  ) %>% 
+  select(outcome, model, result)
+tmpr
+```
+
+Although numerically greater than the unstandardized coefficients reported above, the standardized associations were small according to common guidelines: (anxiety & internet = `r tmpr$result[1]`, anxiety & mobile = `r tmpr$result[2]`, depression & internet = `r tmpr$result[3]`, depression & mobile = `r tmpr$result[4]`, depression & internet = `r tmpr$result[5]`, depression & mobile = `r tmpr$result[6]`).
+
 We also examined the between-country associations linking internet technology adoption with mental health. Countries with greater levels of per capita internet users, on average, tended to be those with lower levels of depression, and higher levels of self-harm (Figure \@ref(fig:fig-gbd-data)B, Between country estimates). Similarly, per capita mobile broadband subscriptions predicted lower rates of both anxiety and depression, but higher rates of self-harm.
 
 We then examined the heterogeneity in the associations between countries. Although there were considerable differences in changes in anxiety, depression, and self-harm between countries, the associations varied less (Figure \@ref(fig:fig-gbd-parameters)A). We found that internet adoption was positively (negatively) associated with anxiety for three (seven) countries, with depression for one (zero) countries, and self-harm for seven (ten) countries (Table \@ref(tab:tab-gbd-props)). We include all countries' estimates in the online materials.
@@ -1660,9 +1731,9 @@ We then measured the extent to which countries' per capita internet users and mo
 
 Finally, we found large age-based differences in associations linking internet technology adoption and mental health outcomes. Both depression and self-harm were more positively associated with per capita internet users and mobile broadband subscriptions in the younger age brackets---including the youngest studied here at 10 to 14 years---than they were for older age groups. Studies on the association between internet technology use and mental health across wide age ranges are scarce. Nevertheless, while we found few gender differences, our results are in line with one study reporting that cross-sectional associations between social media use and life satisfaction are more negative at specific time windows in adolescence [@orbenWindowsDevelopmentalSensitivity2022].
 
-Our results do not provide evidence supporting the view that the internet, and technologies enabled by it such as smartphones with internet access, are actively promoting or harming either well-being or mental health globally. Our results also suggest that age- and sex-based differences in associations linking internet technology adoption and well-being are small. However, we did find evidence suggesting that internet technology adoption is more negatively associated with young individuals' mental health than older groups' (whose associations were, in some cases, positive).
+Our results do not provide evidence supporting the view that the internet, and technologies enabled by it such as smartphones with internet access, are actively promoting or harming either well-being or mental health globally. Our results also suggest that age- and sex-based differences in associations linking internet technology adoption and well-being are small. However, we did find evidence suggesting that internet technology adoption is more negatively associated with young individuals' mental health than older groups' (whose associations were, in some cases, positive). Nevertheless, these associations, although sometimes credibly different from zero, appeared small in magnitude. Because of their apparently small magnitude and the fact that the data are not at the individual level, we highlight that these contrasts do not speak to whether the associations might be clinically relevant.
 
-It is important to note that the data and theory required to address this question at the causal level are absent. Consequently, our analyses cannot account for potential confounders in the associations linking mental health and well-being to internet technology adoption. Our descriptions, therefore, are suggestive but are not intended to provide evidence for, or against, causal relations. Although the first to study this topic within a global perspective, future studies should investigate other potential differences based on demographic, economic, and cultural factors, which we could not address here. In addition, our results regarding mental health, while comprehensive, are necessarily and considerably less certain than those on well-being, due to the lack of diverse global data and our own reliance on GBD estimates in place of objective measurements of mental health.
+It is important to note that the data and theory required to address this question at the causal level are absent. Consequently, our analyses cannot account for potential confounders in the associations linking mental health and well-being to internet technology adoption. Our descriptions, therefore, are suggestive but are not intended to provide evidence for, or against, causal relations. Although the first to study this topic within a global perspective, future studies should investigate other potential differences based on demographic, economic, and cultural factors, which we could not address here. In addition, our results regarding mental health, while comprehensive, are necessarily and considerably less certain than those on well-being, due to the lack of diverse global data and our own reliance on GBD estimates in place of objective measurements of mental health. In addition, the data aggregation necessary to link internet adoption and well-being at the national level preclude investigating other important and relevant questions, such as comorbidities.
 
 Research on the effects of internet technologies is stalled because the data most urgently needed are collected and held behind closed doors by technology companies and online platforms. It is crucial to study, in more detail and with more transparency from all stakeholders, data on individual adoption of and engagement with internet-based technologies. These data exist and are continuously analysed by global technology firms for marketing and product improvement, but unfortunately are not accessible for independent research. It remains a fundamental challenge to this field of inquiry to ensure that this information is accessible to independent scholars. Until these data can be transparently analysed for the public good, the potential harmful effects of the internet and other digital environments will remain unknown.
 
