@@ -4,16 +4,17 @@ shorttitle: Global well-being
 leftheader: Global well-being
 author: 
   - name: Matti Vuorre
-    affiliation: 1
-    address: Oxford Internet Institute, University of Oxford
-    email: matti.vuorre@oii.ox.ac.uk
+    affiliation: "1,2"
+    address: Tilburg University
+    email: m.j.vuorre@tilburguniversity.edu
   - name: Andrew K. Przybylski
-    affiliation: 1
+    affiliation: "2"
     corresponding: yes
-    address: Oxford Internet Institute, University of Oxford
     email: andy.przybylski@oii.ox.ac.uk
 affiliation:
   - id: 1
+    institution: Tilburg School of Social and Behavioral Sciences, Tilburg University
+  - id: 2
     institution: Oxford Internet Institute, University of Oxford
 authornote: |
   \noindent \textbf{This pre-print is not yet peer-reviewed.}
