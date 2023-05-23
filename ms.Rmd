@@ -807,7 +807,9 @@ p1 <- itu %>%
     Mobile = mobile,
   ) %>%
   # Truncate mobile percentages for figure
-  mutate(Mobile = if_else(Mobile > 150, NaN, Mobile)) %>%
+  mutate(
+    Mobile = if_else(Mobile > 150, NaN, Mobile),
+    ) %>%
   pivot_longer(
     c(Internet, Mobile),
     names_to = "outcome", values_to = "val"
@@ -818,11 +820,22 @@ p1 <- itu %>%
   summarise(mean = mean(val, na.rm = TRUE)) %>%
   ungroup() %>% 
   mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo))) %>% 
+  filter(region != "Oceania", year >= 2005) %>% 
+  filter(outcome %in% c("Internet", "Mobile", "Life_satisfaction")) %>% 
   mutate(year = make_date(year)) %>%
-  ggplot(aes(year, mean)) +
+  mutate(country = fct_relevel(country, "Netherlands") %>% fct_rev()) %>%
+  ggplot(
+    aes(
+      year, 
+      mean, 
+      size = country == "Netherlands", 
+      color = region == "Europe"
+    )
+  ) +
+  scale_size_manual(values = c(0.25, 0.25)) +
+  scale_color_manual(values = c("white", "white")) +
   scale_y_continuous(
     "Value (%)",
-    # Display percentages
     breaks = pretty_breaks(),
     expand = expansion(.05)
   ) +
@@ -835,8 +848,7 @@ p1 <- itu %>%
   geom_line(
     aes(
       group = interaction(country, outcome)
-    ),
-    size = .05, col = "dodgerblue3"
+    )
   ) +
   facet_grid(
     outcome ~ region,
@@ -844,9 +856,12 @@ p1 <- itu %>%
     labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
   ) +
   theme(
+    text = element_text(size = 18), 
+    panel.spacing = unit(10, "pt"),
+    axis.title.x = element_blank(),
     legend.position = "none"
   )
-
+p1
 x <- fits_wb %>% 
   mutate(out = map(fit, ~spread_draws(.x, `^b_.*`, regex = TRUE))) %>% 
   select(-fit) %>% 
@@ -870,29 +885,38 @@ x <- fits_wb %>%
       levels = c("Time", "Internet", "Mobile")
     )
   )
-p2 <- x %>%   
-  ggplot(aes(value, fct_rev(Predictor), fill = x)) +
-  scale_color_brewer(
-    "Association", palette = "Set2", aesthetics = c("fill", "color")
+p2 <- x %>% 
+  filter(outcome == "Life_satisfaction") %>% 
+  filter(Predictor != "Time") %>% 
+  ggplot(aes(value, fct_rev(Predictor), fill = x, color = x)) +
+  scale_color_manual(
+    "Association", 
+    values = c("#fc8d62", "#66c2a5"), 
+    aesthetics = c("fill", "color", "interval_color")
   ) +
   scale_shape_manual(values = c(21, 19)) +
   scale_x_continuous(
     "Estimated linear association",
     breaks = extended_breaks()
   ) +
-  stat_halfeye(
+  scale_y_discrete(
+    expand = expansion(c(0.001, .01)),
+    drop = FALSE
+  ) +
+  stat_slabinterval(
     aes(shape = after_stat(sign(xmax) == sign(xmin))),
-    position = position_dodge(.15), 
+    position = position_dodge(-.1),
     normalize = "xy", 
-    height = .8,
+    height = .9,
     point_interval = "mean_qi",
-    fatten_point = 3,
+    interval_size_range = c(.25, 1),
+    fatten_point = 4,
     point_fill = "white",
-    size = .25,
     slab_alpha = .75,
     adjust = 1.5,
     .width = .95
-    ) +
+  ) +
+  geom_vline(xintercept = 0, linewidth = .25) +
   facet_wrap(
     "outcome", 
     labeller = labeller(
@@ -900,17 +924,14 @@ p2 <- x %>%
     ),
     scales = "free_x"
   ) +
+  guides(shape = "none") +
   theme(
-    legend.position = "none",
+    legend.position = "bottom",
     axis.title.y = element_blank(),
-    panel.grid.major.x = element_line(
-      color = "black", linetype = "dotted", size = .1
-    )
+    text = element_text(size = 18), 
+    panel.spacing = unit(10, "pt")
   )
-
-(p1 / p2) + 
-  plot_layout(heights = c(8, 2)) +
-  plot_annotation(tag_levels = "A")
+p2
 ```
 
 ```{r}
@@ -999,12 +1020,12 @@ figure_country <- function(data) {
     scale_shape_manual(values = c(21, 19)) +
     scale_linetype_manual(values = c(1, 1, 1)) +
     geom_linerangeh(
-      size = .1,
+      size = .3,
       aes(xmin = CI_low, xmax = CI_high, linetype = cred)
     ) +
     geom_point(
       aes(shape = cred), 
-      size = .55, fill = "white", stroke = .2
+      size = 1, fill = "white", stroke = .3
     ) +
     guides(
       linetype = "none", 
@@ -1020,6 +1041,7 @@ figure_country <- function(data) {
       )
     ) +
     theme(
+      text = element_text(size = 18), 
       axis.text.y = element_blank(),
       axis.ticks.y = element_blank(),
       panel.grid.major.x = element_line(
@@ -1028,7 +1050,8 @@ figure_country <- function(data) {
       legend.position = "none"
     )
 }
-p_country_wb <- figure_country(tab_wb)
+p_country_wb <- figure_country(tab_wb %>% filter(outcome == "Life_satisfaction"))
+p_country_wb
 ```
 
 ```{r gwp-demographics}
