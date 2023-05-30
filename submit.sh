@@ -10,6 +10,6 @@
 #SBATCH --job-name=DWG-Global
 
 module purge
-module load R/4.1.2-foss-2021b-ARC
+module load R/4.2.2-foss-2022a-ARC
 
 Rscript models.R $SLURM_ARRAY_TASK_ID
