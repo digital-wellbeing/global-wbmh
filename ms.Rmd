@@ -31,7 +31,6 @@ mask: no
 figurelist: no
 tablelist: no
 footnotelist: no
-# header-includes:
 csl: "`r system.file('rmd', 'apa7.csl', package = 'papaja')`"
 documentclass: apa7
 classoption: jou
@@ -193,6 +192,7 @@ gwp <- drop_na(gwp, age)
 # Some sex values are missing, drop those
 gwp <- drop_na(gwp, sex)
 
+# Pivot outcomes to long format
 gwp <- gwp %>%
   pivot_longer(
     c(
@@ -201,20 +201,20 @@ gwp <- gwp %>%
       Positive_experiences
     ),
     names_to = "outcome", values_to = "val"
-  ) %>%
-  group_by(country, year, sex, age, outcome) %>%
+  )
+
+# Aggregate outcomes
+gwp <- gwp %>% 
   summarise(
     n = n(),
-    se = sd(val, na.rm = TRUE) / sqrt(n),
-    val = mean(val, na.rm = TRUE)
-  ) %>%
-  ungroup()
-
-# Note that if there is no response variance, SE will be zero, and if there is only 1 response, SE will be NA. Here we fix those by assigning them the maximum SE (0.5)
-gwp <- gwp %>% 
-  mutate(
-    se = if_else(is.na(se) | se == 0, 0.5, se)
+    sd = sd(val, na.rm = TRUE),
+    val = mean(val, na.rm = TRUE),
+    .by = c(country, year, sex, age, outcome)
   )
+
+# Assign N of 1 cells a standard deviation of zero
+gwp <- gwp %>% 
+  mutate(sd = if_else(is.na(sd), 0, sd))
 
 # We can see that this would result in North Cyprus being lumped with Cyprus so we need to replace the name before harmonising
 
@@ -293,7 +293,7 @@ gbd <- gbd %>%
 
 # The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions). We convert those to normal approximate standard errors.
 gbd <- gbd %>%
-  mutate(se = (upper - lower) / (1.96 * 2)) %>%
+  mutate(sd = (upper - lower) / (1.96 * 2)) %>%
   select(-c(upper, lower))
 
 # Harmonise old names and replace only if harmonised name found
@@ -487,10 +487,6 @@ dat <- dat %>%
   mutate(outcome = factor(outcome, levels = oo)) %>% 
   arrange(outcome, country, region, year)
 
-# Selfharm models don't converge with SEs
-dat <- dat %>% 
-  mutate(se = if_else(outcome == "Selfharm", 0, se))
-
 # Save data for models
 saveRDS(dat, "data/data-all.rds")
 ```
@@ -534,7 +530,7 @@ Life satisfaction in the moment was measured with one 11-step Likert item, "Plea
 
 We analysed the data with meta-analytic bayesian hierarchical regression models [@burknerBrmsPackageBayesian2017; @gelmanDataAnalysisUsing2007; @standevelopmentteamStanModelingLanguage2021]. We first asked how the well-being outcomes had changed over time. Bayesian methods are especially suitable to our reserch questions, because they involve many potential contrasts between e.g. countries and ages. Using bayesian hierarchical models allowed us to accurately quantify uncertainty at different levels of analyses while avoiding problems with multiple comparisons (see below). To answer, we modelled each outcome (e.g. life satisfaction) on population level intercepts (we centred time on 2010), contrasts of time (in continuous years), sex (Female: 1, Male: -1), and their interaction. We allowed all coefficients to vary across countries, age groups, and the age by country interactions, and treated all outcomes as normally distributed.
 
-Before modelling the data, we aggregated the individual-level well-being values to means and standard errors for each country-year-age-sex combination, in order to facilitate the Hamiltonian Monte Carlo computations on large data, and to harmonise the analyses and inferences between Studies 1 and 2. Importantly, we note that because we modelled unweighted demographic- and country-level data, our unit of analyses are demographic groups within countries, with no adjustment to e.g. countries' population sizes.
+Before modelling the data, we aggregated the individual-level well-being values to means, standard deviations, and counts for each country-year-age-sex combination, in order to facilitate the Hamiltonian Monte Carlo computations on large data, and to harmonise the analyses and inferences between Studies 1 and 2. Importantly, we note that because we modelled unweighted demographic- and country-level data, our unit of analyses are demographic groups within countries, with no adjustment to e.g. countries' population sizes.
 
 Our second research question asked how changes in internet technology adoption predicted well-being. To answer, we expanded the above model to include within-country centred per capita internet users (or mobile broadband subscriptions in a separate model) and its interaction with sex as predictors of the well-being outcome, and all their associated varying effects. We also included the between-country centered variable as a predictor to examine between-country associations between internet technology adoption and well-being. 
 
@@ -543,7 +539,7 @@ Importantly, we did not make the necessary strong assumptions required for ident
 We specified the model as
 
 \begin{align*} 
-y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{se}^2_i}), \\
+y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{sd}^2_i}), \\
 \mu_i &= \alpha_{0} + \beta_{0\text{country}[i]} + \gamma_{0\text{age}[i]} + \delta_{0\text{age:country}[i]} + \\
 &\quad\ (\alpha_{1} + \beta_{1\text{country}[i]} + \gamma_{1\text{age}[i]} + \delta_{1\text{age:country}[i]})\text{Time}_i + \\
 &\quad\ (\alpha_{2} + \beta_{2\text{country}[i]} + \gamma_{2\text{age}[i]} + \delta_{2\text{age:country}[i]})\text{Sex}_i + \\
@@ -557,19 +553,11 @@ y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{se}^2_i}), \\
 \pmb{\delta} &\sim \text{MVN}(\pmb{0}, \Sigma^\text{age:country}),
 \end{align*}
 
-where $i$ indexes rows in the data and $\text{se}_i$ are the known standard errors. $\text{X}^{\text{CW}}_i$ and $\text{X}^{\text{CB}}_i$ are the within- and between-country centred internet technology adoption predictor (per capita internet users or mobile broadband subscriptions, in separate models), respectively. We used default noninformative priors on all parameters except the following population-level coefficients, that were modelled as
-
-\begin{align*}
-\alpha_{1,3-6} &\sim \text{Normal}(0, 1), \\
-\alpha_{2} &\sim \text{Normal}(0, 3), \\
-\sigma_{\gamma_4} &\sim \text{Normal}^+(0, 0.5).
-\end{align*}
-
-We used these priors to help model convergence, and on the assumption that differences in well-being between males and females are likely greater than differences associated with years, one-percent increases in technology adoption predictors, or the interaction terms.
+where $i$ indexes rows in the data and $\text{sd}_i$ are the known standard deviations. $\text{X}^{\text{CW}}_i$ and $\text{X}^{\text{CB}}_i$ are the within- and between-country centred internet technology adoption predictor (per capita internet users or mobile broadband subscriptions, in separate models), respectively. In addition to the standard deviations, we weighted each observation by the number of respondents in that cell, to adjust for varying sample sizes across cells. We used default noninformative priors on all parameters.
 
 Our third research question asked whether any trends in well-being or its associations with internet or mobile broadband adoption were specific to adolescents or other demographic groups. To answer, the model allowed all parameters to vary randomly across the age groups and the age by country interaction. Therefore, each age group, on average and within each country, received their own partially pooled estimates [@gelmanDataAnalysisUsing2007]. This bayesian approach to estimating age-specific associations is beneficial, given that the large number of age groups, especially within countries, would otherwise present difficulties with uncertain estimates and multiple comparisons. In addition, bayesian methods allowed quantifying uncertainties at different levels of analysis, rather than providing e.g. only point estimates of country-specific quantities. Therefore, we could compare younger age groups to older age groups, and investigate other contrasts, with confidence and without additional post-hoc adjustment procedures [@gelmanWhyWeUsually2012]. 
 
-We conducted all data analyses with R [@rcoreteamLanguageEnvironmentStatistical2021] and estimated the models using Stan's Hamiltonian Monte Carlo sampling via the brms R package [@burknerBrmsPackageBayesian2017; @standevelopmentteamStanModelingLanguage2021]. We ran 4 HMC chains with 3,000 iterations and first 1,500 as warmup for 6,000 total iterations. We ensured that all population-level parameters' had converged using numeric diagnostics (all Rhats were within 0.01 of 1) and visual inspection of parameters' scatterplot matrices.
+We conducted all data analyses with R [@rcoreteamLanguageEnvironmentStatistical2021] and estimated the models using Stan's Hamiltonian Monte Carlo sampling via the brms R package [@burknerBrmsPackageBayesian2017; @standevelopmentteamStanModelingLanguage2021]. We ran 4 HMC chains with 4,000 iterations and first 2,000 as warmup for 8,000 total iterations. We ensured that all population-level parameters' had converged using numeric diagnostics (all Rhats were within 0.01 of 1) and visual inspection of parameters' scatterplot matrices.
 
 ## Results
 
