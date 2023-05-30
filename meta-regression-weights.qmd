@@ -1,0 +1,160 @@
+---
+title: "Meta-regression weighting"
+format: html
+---
+
+Confirming how brms syntax works re meta-regression.
+
+```{r}
+library(brms)
+library(janitor)
+library(posterior)
+library(ggstance)
+library(tidyverse)
+```
+
+Get a snippet of data
+
+```{r}
+dat <- read_rds("data-raw/Gallup/gwp-processed.rds") %>%
+  clean_names() %>%
+  transmute(
+    country = countrynew,
+    year = year_calendar,
+    id = wpid,
+    sex = factor(wp1219, levels = c(2, 1), labels = c("Female", "Male")),
+    age = wp1220,
+    # Don't know, refused, and missing values
+    Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
+    across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
+    # Also reverse the weird 1: yes 2: no coding here
+    across(wp60:wp74, ~ 3 - .)
+  ) %>% 
+  filter(country == "United States", year == 2015) %>% 
+  select(sex, age, Life_satisfaction) %>% 
+  filter(age <= 89) %>% 
+  mutate(
+    age = cut(
+      age,
+      breaks = seq(15, 90, by = 5),
+      include.lowest = TRUE,
+      right = FALSE,
+      labels = paste(seq(15, 85, by = 5), "to", seq(19, 89, by = 5))
+    ) %>% as.character()
+  )
+dat_sum <- dat %>% 
+  summarise(
+    n = sum(!is.na(Life_satisfaction)),
+    sd = sd(Life_satisfaction, na.rm = TRUE),
+    se = sd / sqrt(n),
+    Life_satisfaction = mean(Life_satisfaction, na.rm = TRUE), 
+    .by = c(age, sex)
+    )
+```
+
+Specify models
+
+```{r}
+# Raw data
+f1 <- brm(
+  Life_satisfaction ~ 0 + age %in% sex,
+  data = dat,
+  backend = "cmdstanr",
+  cores = 4
+)
+
+# With SEs
+f2.1 <- brm(
+  Life_satisfaction | se(se, sigma = TRUE) ~ 0 + age %in% sex,
+  data = dat_sum,
+  backend = "cmdstanr",
+  cores = 4
+)
+f2.2 <- brm(
+  Life_satisfaction | se(se, sigma = TRUE) + weights(n) ~ 0 + age %in% sex,
+  data = dat_sum,
+  backend = "cmdstanr",
+  cores = 4
+)
+
+# With SDs
+f3.1 <- brm(
+  Life_satisfaction | se(sd, sigma = TRUE) ~ 0 + age %in% sex,
+  data = dat_sum,
+  backend = "cmdstanr",
+  cores = 4
+)
+f3.2 <- brm(
+  Life_satisfaction | se(sd, sigma = TRUE) + weights(n) ~ 0 + age %in% sex,
+  data = dat_sum,
+  backend = "cmdstanr",
+  cores = 4
+)
+```
+
+Compare estimates
+
+```{r}
+bind_rows(
+  as_draws_df(f1) %>% 
+    summarize_draws(),
+  as_draws_df(f2.1) %>% 
+    summarize_draws(),
+  as_draws_df(f2.2) %>% 
+    summarize_draws(),
+  as_draws_df(f3.1) %>% 
+    summarize_draws(),
+  as_draws_df(f3.2) %>% 
+    summarize_draws(),
+  .id = "Model"
+) %>% 
+  mutate(
+    Model = factor(Model, labels = c("1", "2.1", "2.2", "3.1", "3.2")),
+    sex = factor(str_detect(variable, "sexFemale"), labels = c("Male", "Female"))
+  ) %>% 
+  filter(str_starts(variable, "b_")) %>% 
+  ggplot(aes(mean, variable, col = Model)) +
+  geom_pointrangeh(
+    aes(xmin = q5, xmax = q95),
+    position = position_dodgev(.75)
+  ) +
+  facet_wrap("sex", scales = "free_y")
+```
+
+Standardizing
+
+```{r}
+f1.2 <- brm(
+  scale(Life_satisfaction) ~ 0 + age %in% sex,
+  data = dat,
+  backend = "cmdstanr",
+  cores = 4
+)
+```
+
+```{r}
+bind_rows(
+  as_draws_df(f1) %>% 
+    summarize_draws(),
+  as_draws_df(f1.2) %>% 
+    summarize_draws(),
+  .id = "Model"
+) %>% 
+  filter(str_starts(variable, "b_")) %>% 
+  mutate(
+    across(
+      where(is.numeric), 
+      ~if_else(
+        Model == 1, 
+        (. - mean(dat$Life_satisfaction, na.rm = TRUE)) / sd(dat$Life_satisfaction, na.rm = TRUE), 
+        .
+      )
+    )
+  ) %>% 
+  ggplot(aes(mean, variable, col = Model)) +
+  geom_pointrangeh(
+    aes(xmin = q5, xmax = q95),
+    position = position_dodgev(1)
+  )
+```
+
