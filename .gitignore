@@ -13,5 +13,6 @@ data/
 diagnostics/
 
 *.log
+*.pdf
 *cache/
 *_files/
