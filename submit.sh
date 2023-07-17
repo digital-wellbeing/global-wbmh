@@ -5,8 +5,8 @@
 
 #SBATCH --constraint='cpu_frq:2.90GHz'
 #SBATCH --cpus-per-task=4
-#SBATCH --mem-per-cpu=3G
-#SBATCH --time=7-00:00:00
+#SBATCH --mem-per-cpu=2G
+#SBATCH --time=8-00:00:00
 #SBATCH --job-name=DWG-Global
 
 module purge
