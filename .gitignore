@@ -12,5 +12,11 @@ models*/
 data/
 diagnostics/
 
+*.log
+*.pdf
+*.html
+*.docx
+*.tex
 *cache/
 *_files/
+/.quarto/
