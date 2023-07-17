@@ -1,6 +1,6 @@
-# A global study of the association between internet adoption and adolescent mental health and well-being
+# Global well-being and mental health in the internet age
 
-This repository ([GitHub](https://github.com/digital-wellbeing/global-wbmh) / [OSF](https://osf.io/ys7m9/)) contains the code and synthetic datasets required to reproduce all analyses reported in our manuscript, *A global study of the association between internet adoption and adolescent mental health and well-being* (Vuorre & Przybylski, in preparation). These analyses are presented in the [Online analysis supplement](https://digital-wellbeing.github.io/global-wbmh).
+This repository contains the code and synthetic datasets required to reproduce all analyses reported in *Global well-being and mental health in the internet age* (Vuorre & Przybylski). 
 
 ## Materials
 
@@ -13,7 +13,7 @@ This repository ([GitHub](https://github.com/digital-wellbeing/global-wbmh) / [O
 
 ## Reproducibility
 
-The analyses were conducted in R, and can be reproduced locally:
+The analyses were conducted in R; steps to reproduce are
 
 1. Clone the [github repo](https://github.com/digital-wellbeing/global-wbmh)
   - Terminal: `git clone https://github.com/digital-wellbeing/global-wbmh.git`  
