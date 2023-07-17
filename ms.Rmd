@@ -10,6 +10,7 @@ author:
   - name: Andrew K. Przybylski
     affiliation: "2"
     corresponding: yes
+    address: Oxford Internet Institute
     email: andy.przybylski@oii.ox.ac.uk
 affiliation:
   - id: 1
@@ -19,7 +20,7 @@ affiliation:
 authornote: |
   \noindent \textbf{This pre-print is not yet peer-reviewed.}
 abstract: | 
-  In the last two decades the rise of internet technologies have impacted nearly all domains of human life and inspired concern that their widespread adoption has impacted mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen small and inconsistent changes in global well-being and mental health. The broadest available health and internet technology data does not support the idea that the adoption of internet and mobile broadband is consistently linked to negative psychological outcomes. However, associations between internet technology adoption and depression and self-harm were strongest (albeit still small) for individuals aged between 10 and 34. Further investigation of this topic requires transparent study of online behaviours where they occur, namely on online platforms. We call for increased collaborative efforts between independent scientists and the internet technology sector.
+  In the last two decades the widespread adoption of internet technologies has inspired concern that they have negatively impacted mental health and psychological well-being. However, research on the topic is contested and hampered by methodological shortcomings leaving the broader consequences of internet adoption unknown. We show that the past two decades have seen only small and inconsistent changes in global well-being and mental health that are not suggestive of the idea that the adoption of internet and mobile broadband is consistently linked to negative psychological outcomes. Further investigation of this topic requires transparent study of online behaviours where they occur, namely on online platforms. We call for increased collaborative efforts between independent scientists and the internet technology sector.
   
 keywords: well-being, mental health, internet technology, technology effects
 wordcount: '`r scales::number(wordcountaddin:::word_count("ms.Rmd"), big.mark = ",")`'
@@ -37,33 +38,25 @@ classoption: jou
 output: 
   papaja::apa6_pdf:
     number_sections: false
-    keep_tex: false
+    keep_tex: true
   papaja::apa6_docx: 
     number_sections: false
 editor_options: 
   chunk_output_type: console
-always_allow_html: true
 ---
 
 ```{r setup, include = FALSE}
 # Packages
 library(papaja)
-library(readxl)
-library(imputeTS)
 library(scales)
-library(janitor)
-library(haven)
-library(labelled)
 library(tidybayes)
 library(ggdist)
-library(countrycode)
 library(lubridate)
 library(brms)
 library(patchwork)
 library(knitr)
-library(ggstance)
+library(posterior)
 library(bayestestR)
-library(ggh4x)
 library(tidyverse)
 
 opts_chunk$set(
@@ -72,26 +65,43 @@ opts_chunk$set(
   include = FALSE,
   message = FALSE,
   warning = FALSE,
+  error = TRUE,
   dpi = 300,
   fig.align = "center"
 )
-# For tables: Show NAs as blanks
-options(knitr.kable.NA = '')
-
-# Create directory for intermediate files
-dir.create("data", FALSE)
 
 # Plotting options
 theme_set(
   theme_linedraw(
-    base_size = if_else(knitr::is_latex_output(), 9, 8)
+    base_size = if_else(knitr::is_latex_output(), 8, 7)
   ) +
     theme(
       panel.grid = element_blank(),
       strip.text = element_text(margin = margin(4, 4, 4, 4, "pt")),
-      axis.text = element_text(size = rel(0.75)),
-      axis.ticks = element_line(size = rel(0.3))
+      axis.text = element_text(size = rel(0.7)),
+      axis.ticks = element_line(size = rel(0.2))
     )
+)
+dir.create("cache", FALSE)
+```
+
+```{r data}
+dat <- read_rds("data/data-all.rds")
+gwp <- read_rds("data/gwp.rds")
+itu <- read_rds("data/itu.rds")
+gbd <- read_rds("data/gbd.rds")
+z <- read_rds("data/scaling-factors.rds")
+coefficients <- read_rds("cache/coefficients.rds")
+epred <- read_rds("cache/epred.rds")
+```
+
+```{r variables}
+# For ordering outcome factor
+oo <- c(
+  "Life_satisfaction", 
+  "Negative_experiences", 
+  "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
 )
 ```
 
@@ -105,405 +115,20 @@ percent2 <- function(x, accuracy = .1) {
 }
 ```
 
-```{r data-clean}
-## # Understand variables & values
-## # Codes NOTE 1: yes 2: no!
-## read_spss(
-##   "data-raw/Gallup/The_Gallup_101521.sav",
-##   n_max = 1,
-##   col_select = c(
-##     WPID, WP1219,
-##     WP16,
-##     WP60, WP61, WP63, WP65, WP67,
-##     WP68, WP69, WP70, WP71, WP74
-##   )
-## ) %>%
-##   generate_dictionary()
+In 2005, an estimated 17% of the global population used the internet, but by 2020 this number was already 59% [@ituITUICTStatistics2021]. Accompanying the rapid spread of the internet, worries have proliferated that its broad adoption—and technologies enabled by it such as online games, smartphones, and social media—is actively harming its users, particularly adolescents [@carrShallowsHowInternet2010; @turkleAloneTogetherWhy2011]. As a response, users and a growing number of national governments have acted in limiting access to online technologies [@buckleyChinaTightensLimits2021; @departmentfordigitalculturemediasportDraftOnlineSafety2021; @kattulaGamePoliciesContexts2021]. 
 
-# First liberate the data from the slow SPSS file and save to disk
-gwp_path <- "data-raw/Gallup/gwp-processed.rds"
-if (!file.exists(gwp_path)) {
-  gwp <- read_spss(
-    "data-raw/Gallup/The_Gallup_101521.sav",
-    col_select = c(
-      YEAR_CALENDAR,
-      COUNTRYNEW,
-      WPID, WP1220, WP1219,
-      WP16,
-      WP60, WP61, WP63, WP65, WP67,
-      WP68, WP69, WP70, WP71, WP74
-    )
-  )
-  # Get rid of SPSS attributes
-  gwp <- gwp %>%
-    zap_labels() %>%
-    zap_label() %>%
-    zap_widths() %>%
-    zap_formats()
-  # Save into a good format
-  write_rds(gwp, gwp_path)
-} else {
-  gwp <- read_rds(gwp_path)
-}
-
-# Rename and recode variables
-gwp <- gwp %>%
-  clean_names() %>%
-  transmute(
-    country = countrynew,
-    year = year_calendar,
-    id = wpid,
-    sex = factor(wp1219, levels = c(2, 1), labels = c("Female", "Male")),
-    age = wp1220,
-    # Don't know, refused, and missing values
-    Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
-    across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
-    # Also reverse the weird 1: yes 2: no coding here
-    across(wp60:wp74, ~ 3 - .)
-  )
-
-# Scale scores note rescaling to percentages
-gwp <- gwp %>%
-  mutate(
-    Life_satisfaction = Life_satisfaction * 10,
-    Negative_experiences =
-      (rowMeans(select(., wp68:wp74), na.rm = TRUE) - 1) * 100,
-    Positive_experiences =
-      (rowMeans(select(., wp60:wp67), na.rm = TRUE) - 1) * 100
-  ) %>%
-  select(-c(wp60:wp74))
-
-# Categorize ages
-gwp <- filter(gwp, age <= 89)
-gwp <- gwp %>%
-  mutate(
-    age = cut(
-      age,
-      breaks = seq(15, 90, by = 5),
-      include.lowest = TRUE,
-      right = FALSE,
-      labels = paste(seq(15, 85, by = 5), "to", seq(19, 89, by = 5))
-    ) %>% as.character()
-  )
-
-# There is one 13 year old which resulted in a NA and we drop it
-gwp <- drop_na(gwp, age)
-
-# Some sex values are missing, drop those
-gwp <- drop_na(gwp, sex)
-
-# Pivot outcomes to long format
-gwp <- gwp %>%
-  pivot_longer(
-    c(
-      Life_satisfaction,
-      Negative_experiences,
-      Positive_experiences
-    ),
-    names_to = "outcome", values_to = "val"
-  )
-
-# Aggregate outcomes
-gwp <- gwp %>% 
-  summarise(
-    n = n(),
-    sd = sd(val, na.rm = TRUE),
-    val = mean(val, na.rm = TRUE),
-    .by = c(country, year, sex, age, outcome)
-  )
-
-# Assign N of 1 cells a standard deviation of zero
-gwp <- gwp %>% 
-  mutate(sd = if_else(is.na(sd), 0, sd))
-
-# We can see that this would result in North Cyprus being lumped with Cyprus so we need to replace the name before harmonising
-
-# Harmonise old names and replace only if harmonised name found
-gwp <- gwp %>%
-  mutate(
-    country_harmonised = countryname(
-      country,
-      destination = "cldr.short.en"
-    )
-  ) %>%
-  # This picks the harmonised name if exists, otherwise original name
-  # Prevent north cyprus from becoming cyprus
-  mutate(
-    country_harmonised = ifelse(
-      country == "Northern Cyprus",
-      "Northern Cyprus",
-      country_harmonised
-    )
-  ) %>%
-  mutate(country = coalesce(country_harmonised, country)) %>%
-  select(-country_harmonised)
-
-gwp_mock_path <- "data-raw/gwp-MOCK.rds"
-if (dir.exists("data-raw/Gallup") & !file.exists(gwp_mock_path)) {
-  library(synthpop)
-  gwp_syn <- gwp %>% 
-    drop_na()
-  gwp_syn <- syn(
-    gwp_syn, 
-    method = c("", "", "", "", "", "", "normrank", "normrank"),
-    maxfaclevels = 168
-  )
-  gwp_syn <- tibble(gwp_syn$syn)
-  saveRDS(gwp_syn, gwp_mock_path)
-}
-
-# Load if actual data doesn't exist
-if (!dir.exists("data-raw/Gallup")) {
-  cat("Using synthetic GWP data.")
-  gwp <- read_rds(gwp_mock_path)
-} else {
-  cat("Using actual GWP data.")
-}
-
-# Load data files and merge to one table
-gbd <- list.files(
-  "data-raw/GBD/",
-  pattern = ".zip", full.names = TRUE, recursive = TRUE
-) %>%
-  read_csv()
-
-# First step is to clean names and remove unnecessary variables
-gbd <- clean_names(gbd)
-# distinct(gbd, measure, metric)
-gbd <- select(gbd, -measure, -metric)
-
-# Rates to percentages
-gbd <- gbd %>%
-  mutate(across(c(val, upper, lower), ~ .x / 1000))
-
-# Clean cause names
-# distinct(gbd, cause)
-gbd <- gbd %>%
-  mutate(
-    cause = case_when(
-      cause == "Anxiety disorders" ~ "Anxiety",
-      cause == "Depressive disorders" ~ "Depression",
-      cause == "Self-harm" ~ "Selfharm"
-    )
-  )
-
-# Harmonise variable names with other datasets
-gbd <- gbd %>%
-  rename(country = location, outcome = cause)
-
-# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions). We convert those to normal approximate standard errors.
-gbd <- gbd %>%
-  mutate(sd = (upper - lower) / (1.96 * 2)) %>%
-  select(-c(upper, lower))
-
-# Harmonise old names and replace only if harmonised name found
-gbd <- gbd %>%
-  mutate(
-    country_harmonised = countryname(
-      country,
-      destination = "cldr.short.en"
-    )
-  ) %>%
-  # This picks the harmonised name if exists, otherwise original name
-  mutate(country = coalesce(country_harmonised, country)) %>%
-  select(-country_harmonised)
-
-# Download data sets from the ITU website if not yet downloaded
-if (!file.exists("data-raw/ITU/PercentIndividualsUsingInternet.xlsx")) {
-  dir.create("data-raw/ITU")
-  download.file(
-    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2022/July/PercentIndividualsUsingInternet.xlsx",
-    "data-raw/ITU/PercentIndividualsUsingInternet.xlsx"
-  )
-  download.file(
-    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2022/July/MobileBroadbandSubscriptions_2007-2021.xlsx",
-    "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx"
-  )
-}
-
-# Read and reshape mobile broadband data
-itu_mobile <- read_xlsx(
-  "data-raw/ITU/MobileBroadbandSubscriptions_2007-2020.xlsx",
-  sheet = 2,
-  col_types = "text"
-) %>%
-  pivot_longer(-c(Indicator, Economy)) %>%
-  separate(name, into = c("year", "variable")) %>%
-  pivot_wider(names_from = variable) %>%
-  mutate(mobile = as.numeric(value)) %>%
-  select(country = Economy, year, mobile)
-
-# Percent using internet
-itu_percent <- read_xlsx(
-  "data-raw/ITU/PercentIndividualsUsingInternet.xlsx",
-  col_types = "text"
-) %>%
-  pivot_longer(-c(Indicator, Economy)) %>%
-  separate(name, into = c("year", "variable")) %>%
-  pivot_wider(names_from = variable) %>%
-  mutate(internet = as.numeric(value)) %>%
-  select(country = Economy, year, internet)
-
-# Merge to one table in wide format (oldest on left to include all years)
-itu <- reduce(list(itu_percent, itu_mobile), left_join)
-
-# years to numbers
-itu <- itu %>%
-  mutate(year = as.numeric(year))
-
-# Drop tables
-rm(itu_mobile, itu_percent)
-
-# Harmonise old names and replace only if harmonised name found
-itu <- itu %>%
-  mutate(
-    country_harmonised = countryname(
-      country,
-      destination = "cldr.short.en"
-    )
-  ) %>%
-  # This picks the harmonised name if exists, otherwise original name
-  mutate(country = coalesce(country_harmonised, country)) %>%
-  select(-country_harmonised)
-
-# Drop countries that don't exist in outcomes
-itu <- itu %>%
-  filter(
-    country %in% unique(gbd$country) | country %in% unique(gwp$country)
-  )
-
-# Drop countries that don't have any actual internet data
-itu_zeros <- itu %>%
-  group_by(country) %>%
-  summarise(s = sum(internet, na.rm = TRUE)) %>%
-  filter(s == 0)
-
-itu <- itu %>%
-  filter(!(country %in% itu_zeros$country))
-rm(itu_zeros)
-
-# Reshape to easily impute all variables
-itu_long <- itu %>%
-  pivot_longer(c(internet, mobile))
-
-# Impute by country and variable
-itu_long <- itu_long %>%
-  group_by(country, name) %>%
-  # Find first and last year with this variable in each country
-  # so as to prevent extrapolation
-  mutate(
-    min_year = year[min(which(!is.na(value)))],
-    max_year = year[max(which(!is.na(value)))]
-  ) %>%
-  # Interpolate values linearly
-  # use possibly() to avoid errors for countries with no data
-  mutate(
-    across(
-      value,
-      .fns = list(
-        i = possibly(
-          function(x) na_interpolation(x, maxgap = Inf),
-          otherwise = NaN
-        )
-      )
-    )
-  ) %>%
-  # Take out projected (non-intermediate) imputed values
-  mutate(
-    value_i = if_else(
-      between(year, unique(min_year), unique(max_year)),
-      value_i,
-      NaN
-    )
-  ) %>%
-  ungroup() %>%
-  select(-min_year, -max_year)
-
-# Summary
-itu_sum <- itu_long %>%
-  filter(!(name=="mobile" & year < 2007)) %>% 
-  group_by(Metric = name) %>%
-  summarise(
-    total = n(), 
-    total_not_missing = sum(!is.na(value)),
-    missing = sum(is.na(value)),
-    imputed = sum(is.na(value) & !is.na(value_i))
-  )
-
-# We then replace the original values with the imputed ones
-itu <- itu_long %>%
-  # Pick non-missing value, from original and imputed
-  mutate(value = coalesce(value, value_i)) %>%
-  select(-value_i) %>%
-  pivot_wider()
-rm(itu_long)
-
-regions <- bind_rows(
-  distinct(itu, country),
-  distinct(gbd, country),
-  distinct(gwp, country)
-) %>% 
-  distinct() %>% 
-  mutate(
-    region = countrycode(
-      country, 
-      origin = "country.name", 
-      destination = "continent"
-    )
-  )
-
-# Manually fix two countries
-regions <- regions %>% 
-  mutate(
-    region = if_else(country == "Kosovo", "Europe", region),
-    region = if_else(country == "Nagorno Karabakh", "Asia", region)
-  )
-
-# Add regions to data tables
-itu <- left_join(itu, regions)
-gbd <- left_join(gbd, regions)
-gwp <- left_join(gwp, regions)
-
-# Stack outcome data
-dat <- bind_rows(gwp, gbd)
-
-# Merge predictors to outcomes
-dat <- left_join(dat, itu)
-
-# Center year
-dat <- dat %>%
-  mutate(year = (year - 2010))
-
-# Ensure that categorical variables are factors
-dat <- dat %>%
-  mutate(across(c(sex, age), factor))
-
-# Arrange on outcome
-oo <- c(
-  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
-  "Anxiety", "Depression", "Selfharm"
-)
-dat <- dat %>%
-  mutate(outcome = factor(outcome, levels = oo)) %>% 
-  arrange(outcome, country, region, year)
-
-# Save data for models
-saveRDS(dat, "data/data-all.rds")
-```
-
-In 2005, an estimated 17% of the global population used the internet, but by 2020 this number was already 59% [@ituITUICTStatistics2021]. Accompanying the rapid spread of the internet, worries have proliferated that its broad adoption—and technologies enabled by it such as online games, smartphones, and social media—is actively harming its users, particularly adolescents [@carrShallowsHowInternet2010; @turkleAloneTogetherWhy2011]. As a response, users and a growing number of national governments have acted in limiting access to online technologies [@buckleyChinaTightensLimits2021; @departmentfordigitalculturemedia&sportDraftOnlineSafety2021; @kattulaGamePoliciesContexts2021]. 
-
-However, evidence for widespread harms of online technologies is limited. Initial reports of internet-facilitated harms have been challenged by later work informed by many methodologies including longitudinal [@jensenYoungAdolescentsDigital2019], specification curve analyses [@orbenAssociationAdolescentWellbeing2019], meta-analyses [@appelAreSocialMedia2020], and systematic reviews [@bestOnlineCommunicationSocial2014; @dickson2018screen; @odgersAnnualResearchReview2020; @ophirNewMediaScreenTime2020]. Reviews indicate early research has been hampered by inaccurate measurements of engagement with internet and related technologies [@davidsonFuzzyConstructsTechnology2022; @parrySystematicReviewMetaanalysis2021; @scharkowAccuracySelfReportedInternet2016], biased convenience samples drawn predominantly from countries in the Global North [ghaiLackSampleDiversity2023; @ghaiSocialMediaAdolescent2022], studying a limited range of well-being outcomes [@orbenSocialMediaEnduring2019], and reliance on self-reported evaluations in place of clinical estimates of important mental health outcomes [@campbellInternetUseSocially2006]. A comprehensive test of the overall association between internet adoption and well-being and mental health, broadly defined, has therefore not been conducted. As a consequence, much of the evidence purporting to show that internet technology adoption is associated with broad changes in well-being and mental health, or even causes negative outcomes, remains equivocal [@dickson2018screen; @hawkesCMOReportUnable2019].
+However, evidence for widespread harms of online technologies is limited. Initial reports of internet-facilitated harms have been challenged by later work informed by many methodologies including longitudinal [@jensenYoungAdolescentsDigital2019], specification curve analyses [@orbenAssociationAdolescentWellbeing2019], meta-analyses [@appelAreSocialMedia2020], and systematic reviews [@bestOnlineCommunicationSocial2014; @dickson2018screen; @odgersAnnualResearchReview2020; @ophirNewMediaScreenTime2020]. Reviews indicate early research has been hampered by inaccurate measurements of engagement with internet and related technologies [@davidsonFuzzyConstructsTechnology2022; @parrySystematicReviewMetaanalysis2021; @scharkowAccuracySelfReportedInternet2016], biased convenience samples drawn predominantly from countries in the Global North [@ghaiLackSampleDiversity2023; @ghaiSocialMediaAdolescent2022], studying a limited range of well-being outcomes [@orbenSocialMediaEnduring2019], and reliance on self-reported evaluations in place of clinical estimates of important mental health outcomes [@campbellInternetUseSocially2006]. A comprehensive test of the overall association between internet adoption and well-being and mental health, broadly defined, has therefore not been conducted. As a consequence, much of the evidence purporting to show that internet technology adoption is associated with broad changes in well-being and mental health, or even causes negative outcomes, remains equivocal [@dickson2018screen; @hawkesCMOReportUnable2019].
 
 In this research we present two studies of global well-being and mental health in the internet age. In the first, we focus on three aspects of psychological well-being, and contrast them with yearly per-capita internet users and mobile broadband subscriptions, across 168 countries and 16 years. In the second we examine three mental health outcomes across 202 countries and 19 years. Our aim is to better understand: 1) How well-being and mental health have changed, on a global scale, during the past two decades of dramatic proliferation of internet technologies and connectivity; 2) How per-capita internet users and mobile broadband subscriptions predict country-level well-being and mental health within a given country and across countries; and 3) Assess the extent to which associations between internet technology adoption and well-being and mental health differ across age and sex and if they are specific to previously suggested vulnerable populations, such as young women.
 
 # Study 1: Well-being
 
-```{r gwp-data-summaries}
+```{r data-summary-wb}
 gwp_sum <- gwp %>% 
   group_by(outcome) %>% 
   summarise(n = sum(n), cells = n()) %>% 
   mutate(across(n:cells, ~number(., big.mark = ",")))
+gwp_sum
 ```
 
 In Study 1, we focused on psychological well-being, as reflected in self-reports of life satisfaction, positive experiences, and negative experiences from `r gwp_sum$n[1]` individuals aged 15 to 89 across `r length(unique(gwp$country))` countries from `r paste0(range(gwp$year), collapse = " to ")`. We contrasted those observations with time series data of the countries' per capita internet users and mobile broadband subscriptions [@ituITUICTStatistics2021] to examine if and how internet and mobile broadband adoption predicted psychological well-being over the past two decades.
@@ -516,11 +141,19 @@ This study was not preregistered. All code used in this project, along with the 
 
 ### Internet adoption
 
-We identified the International Telecommunication Union's (ITU) database of information and communications technology (ICT) as the most comprehensive country-level source of time-series data on internet adoption [@ituITUICTStatistics2021]. The ITU has collated, from 222 countries' statistical and telecommunications agencies, the yearly percentages of population using the internet from 2000 to `r max(itu$year)`, and yearly per capita broadband subscriptions from 2007 to `r max(itu$year)`. Our analyses used `r number(itu_sum[1, 3, drop = TRUE], big.mark = ",")` yearly internet percentages and `r number(itu_sum[2, 3, drop = TRUE], big.mark = ",")` broadband subscription rates; we imputed `r number(itu_sum[1, 5, drop = TRUE], big.mark = ",")` (`r number(itu_sum[2, 5, drop = TRUE], big.mark = ",")` mobile) intermediate missing values to this dataset using linear interpolation without extrapolation. 
+```{r data-summary-itu}
+itu %>% 
+  summarise(
+    i = sum(!is.na(internet)),
+    m = sum(!is.na(mobile))
+  )
+```
+
+We identified the International Telecommunication Union's (ITU) database of information and communications technology (ICT) as the most comprehensive country-level source of time-series data on internet adoption [@ituITUICTStatistics2021]. The ITU has collated, from 222 countries' statistical and telecommunications agencies, the yearly percentages of population using the internet from 2000 to 2021, and yearly per capita mobile broadband subscriptions from 2007 to 2021. Our analyses used 4,200 yearly internet percentages and 2,466 broadband subscription rates.
 
 ### Subjective well-being
 
-We examined subjective well-being indicators from the Gallup World Poll (GWP), a nationally representative annual survey of 1,000 civilian, non-institutionalised individuals aged 15 years or older from `r length(unique(gwp$country))` countries from 2005 to 2021. The surveys are conducted face-to-face or via telephone, in the respondents' native language and by local interviewers. For details on the GWP sampling and survey methodology, see [@gallupGallupWorldPoll2020; @gallupHowDoesGallup2014]. 
+We examined subjective well-being indicators from the Gallup World Poll (GWP), a nationally representative annual survey of 1,000 civilian, non-institutionalised individuals aged 15 years or older from `r length(unique(gwp$country))` countries from 2005 to 2022. The surveys are conducted face-to-face or via telephone, in the respondents' native language and by local interviewers. For details on the GWP sampling and survey methodology, see [@gallupGallupWorldPoll2020; @gallupHowDoesGallup2014]. 
 
 GWP measures subjective well-being with the positive and negative experience indices, which measure respondents' experienced well-being on the day before the survey with five items each. For positive experiences, these items are "Did you feel well-rested yesterday?"; "Were you treated with respect all day yesterday?"; "Did you smile or laugh a lot yesterday?"; "Did you learn or do something interesting yesterday?"; and "(Did you experience the following feelings during a lot of the day yesterday?) How about enjoyment?" And for negative experiences, the items are responses to "Did you experience the following feelings during a lot of the day yesterday?" with prompts "How about physical pain?"; "How about worry?"; "How about sadness?"; "How about stress?"; and "How about anger?" We aggregated both scales for each respondent by taking a mean of the five items. 
 
@@ -528,7 +161,9 @@ Life satisfaction in the moment was measured with one 11-step Likert item, "Plea
 
 ### Data analysis
 
-We analysed the data with meta-analytic bayesian hierarchical regression models [@burknerBrmsPackageBayesian2017; @gelmanDataAnalysisUsing2007; @standevelopmentteamStanModelingLanguage2021]. We first asked how the well-being outcomes had changed over time. Bayesian methods are especially suitable to our reserch questions, because they involve many potential contrasts between e.g. countries and ages. Using bayesian hierarchical models allowed us to accurately quantify uncertainty at different levels of analyses while avoiding problems with multiple comparisons (see below). To answer, we modelled each outcome (e.g. life satisfaction) on population level intercepts (we centred time on 2010), contrasts of time (in continuous years), sex (Female: 1, Male: -1), and their interaction. We allowed all coefficients to vary across countries, age groups, and the age by country interactions, and treated all outcomes as normally distributed.
+We analysed the data with meta-analytic bayesian hierarchical regression models [@burknerBrmsPackageBayesian2017; @gelmanDataAnalysisUsing2007; @standevelopmentteamStanModelingLanguage2022]. Bayesian methods are especially suitable to our reserch questions, because they involve many potential contrasts between e.g. countries and ages. Using bayesian hierarchical models allowed us to accurately quantify uncertainty at different levels of analyses while avoiding problems with multiple comparisons (see below).
+
+We first asked how the well-being outcomes had changed over time. To answer, we modelled each outcome (e.g. life satisfaction) on population level intercepts (we centred time on 2010), contrasts of time (in continuous years), sex (Male: -1, Female: 1), and their interaction. We allowed all coefficients to vary across countries, age groups, and the age by country interactions, and treated all outcomes as normally distributed.
 
 Before modelling the data, we aggregated the individual-level well-being values to means, standard deviations, and counts for each country-year-age-sex combination, in order to facilitate the Hamiltonian Monte Carlo computations on large data, and to harmonise the analyses and inferences between Studies 1 and 2. Importantly, we note that because we modelled unweighted demographic- and country-level data, our unit of analyses are demographic groups within countries, with no adjustment to e.g. countries' population sizes.
 
@@ -536,10 +171,10 @@ Our second research question asked how changes in internet technology adoption p
 
 Importantly, we did not make the necessary strong assumptions required for identifying causal effects, and therefore highlight the descriptive nature of the resulting associations. For instance, we did not adjust for either time-invariant or -varying confounders, which could bias observed between-country and within-country associations, respectively. Nevertheless, we included time as a predictor to adjust for simple temporal trends. In addition, we within-country centred the internet technology adoption variables in order to isolate within-country associations from between-country associations.
 
-We specified the model as
+More formally, we specified the model as
 
 \begin{align*} 
-y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{sd}^2_i}), \\
+y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{se}^2_i}), \\
 \mu_i &= \alpha_{0} + \beta_{0\text{country}[i]} + \gamma_{0\text{age}[i]} + \delta_{0\text{age:country}[i]} + \\
 &\quad\ (\alpha_{1} + \beta_{1\text{country}[i]} + \gamma_{1\text{age}[i]} + \delta_{1\text{age:country}[i]})\text{Time}_i + \\
 &\quad\ (\alpha_{2} + \beta_{2\text{country}[i]} + \gamma_{2\text{age}[i]} + \delta_{2\text{age:country}[i]})\text{Sex}_i + \\
@@ -553,214 +188,49 @@ y_i &\sim \text{Normal}(\mu_i, \sqrt{\sigma^{2} + \text{sd}^2_i}), \\
 \pmb{\delta} &\sim \text{MVN}(\pmb{0}, \Sigma^\text{age:country}),
 \end{align*}
 
-where $i$ indexes rows in the data and $\text{sd}_i$ are the known standard deviations. $\text{X}^{\text{CW}}_i$ and $\text{X}^{\text{CB}}_i$ are the within- and between-country centred internet technology adoption predictor (per capita internet users or mobile broadband subscriptions, in separate models), respectively. In addition to the standard deviations, we weighted each observation by the number of respondents in that cell, to adjust for varying sample sizes across cells. We used default noninformative priors on all parameters.
+where $i$ indexes rows in the data and $\text{se}_i$ are the known standard errors. $\text{X}^{\text{CW}}_i$ and $\text{X}^{\text{CB}}_i$ are the within- and between-country centred internet technology adoption predictor (per capita internet users or mobile broadband subscriptions, in separate models), respectively. We used default noninformative priors [@burknerBrmsPackageBayesian2017] on all parameters except the following population-level coefficients, that we modelled as
+
+\begin{align*}
+\alpha_{1,3-6} &\sim \text{Normal}(0, 1), \\
+\alpha_{2} &\sim \text{Normal}(0, 3).
+\end{align*}
+
+We used these priors to help model convergence, and on the assumption that differences in well-being between males and females are likely greater than differences associated with years, one-percent increases in technology adoption predictors, or the interaction terms.
 
 Our third research question asked whether any trends in well-being or its associations with internet or mobile broadband adoption were specific to adolescents or other demographic groups. To answer, the model allowed all parameters to vary randomly across the age groups and the age by country interaction. Therefore, each age group, on average and within each country, received their own partially pooled estimates [@gelmanDataAnalysisUsing2007]. This bayesian approach to estimating age-specific associations is beneficial, given that the large number of age groups, especially within countries, would otherwise present difficulties with uncertain estimates and multiple comparisons. In addition, bayesian methods allowed quantifying uncertainties at different levels of analysis, rather than providing e.g. only point estimates of country-specific quantities. Therefore, we could compare younger age groups to older age groups, and investigate other contrasts, with confidence and without additional post-hoc adjustment procedures [@gelmanWhyWeUsually2012]. 
 
-We conducted all data analyses with R [@rcoreteamLanguageEnvironmentStatistical2021] and estimated the models using Stan's Hamiltonian Monte Carlo sampling via the brms R package [@burknerBrmsPackageBayesian2017; @standevelopmentteamStanModelingLanguage2021]. We ran 4 HMC chains with 4,000 iterations and first 2,000 as warmup for 8,000 total iterations. We ensured that all population-level parameters' had converged using numeric diagnostics (all Rhats were within 0.01 of 1) and visual inspection of parameters' scatterplot matrices.
+We conducted all data analyses with R [@rcoreteamLanguageEnvironmentStatistical2022] and estimated the models using Stan's Hamiltonian Monte Carlo sampling via the brms R package [@burknerBrmsPackageBayesian2017; @standevelopmentteamStanModelingLanguage2022]. 
+
+Our main descriptive focus was on raw regression coefficients, which indicate contrasts in the outcomes on the percentage scale [@cohenProblemUnitsCircumstance1999] as a function of one unit (year / percent) increase in the predictor. We report these parameters' 95% Credibility Intervals (CI) and posterior probabilities of direction ($p^d$). The latter indicate the degree of certainty in the observed direction of a coefficient, and are sometimes numerically similar to one minus a one-sided *p*-value. 
+
+In addition, on a reviewer's request we report standardized coefficients to describe the magnitudes in an alternative context. These standardized coefficients indicate contrasts in the z-scored outcomes (life satisfaction SD: `r number(z$val_sd[1], .1)`; negative experiences: `r number(z$val_sd[4], .1)`; positive experiences: `r number(z$val_sd[7], .1)`) as a function of the average year-on-year changes in internet (`r number(z$xdev[2], .1)`%) or mobile broadband (`r number(z$xdev[3], .1)`%) adoption. To determine the practical significance of the standardized associations, we report posterior probabilities that their magnitudes exceed the region of practical equivalence to zero ($p^{\text{ROPE}}$) [@kruschkeRejectingAcceptingParameter2018] as defined by [-0.1, 0.1] [@fergusonProvidingLowerboundEstimate2021]. 
 
 ## Results
 
-```{r data-describe}
-gwp %>% 
-  group_by(outcome) %>% 
-  summarise(n=sum(n)) %>% 
-  summarise(N=comma(median(n))) %>% 
-  pull(N)
+Figure \@ref(fig:fig-means-wb)A describes the levels of internet and mobile broadband adoption, and the three well-being variables over time averaged over sex and age. Figure \@ref(fig:fig-means-wb)A shows the universal global penetration of internet technologies in the past two decades, and suggests that in contrast, changes in well-being are likely to be small.
 
-bind_rows(
-  "GWP" = gwp,
-  "GBD" = gbd,
-  .id = "Dataset"
-) %>% 
-  mutate(Dataset = fct_inorder(Dataset)) %>% 
-  count(Dataset, outcome) %>% 
-  bind_rows(
-    itu %>% 
-      select(internet, mobile) %>% 
-      pivot_longer(everything(), names_to = "outcome") %>% 
-      drop_na(value) %>% 
-      count(outcome) %>% 
-      mutate(Dataset = "ITU")
-  )
+```{r tbl-avg-wb}
+#| include: true
 
-# Individuals using the internet per 100 inhabitants | World
-if (!file.exists(
-  "data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx")) {
-  download.file("https://www.itu.int/en/ITU-D/Statistics/Documents/facts/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", "data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx")
-}
-read_excel("data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", range = "T85:AI86")
-```
-
-```{r models-load}
-# Create a table of outcomes in appropriate order, so can map functions over this
-oo <- c(
-  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
-  "Anxiety", "Depression", "Selfharm"
-)
-
-fits <- tibble(
-  path = list.files("models", pattern = "brm-", full.names = TRUE),
-  outcome = basename(path)
-) %>%
-  separate(outcome, c("discard", "outcome", "model"), sep = "-") %>% 
-  mutate(model = str_extract(model, "[0-9]")) %>% 
-  filter(outcome %in% oo) %>% 
-  mutate(fit = map(path, readRDS)) %>% 
-  select(-c(path, discard)) %>% 
-  mutate(outcome = factor(outcome, levels = oo))
-fits_wb <- fits %>% 
-  filter(outcome %in% oo[1:3])
-fits_mh <- fits %>% 
-  filter(outcome %in% oo[4:6])
-rm(fits)
-```
-
-```{r gwp-model-diagnostics}
-if (length(list.files("diagnostics/wb")) == 0) {
-  rhats <- fits_wb %>% 
-    mutate(
-      out = map(
-        fit, 
-        ~describe_posterior(
-          .x, 
-          ci_method = "eti", 
-          test = NULL, 
-          effects = "all",
-          parameters = "^cor_|^sd_|^b_"
-        ) %>% 
-          as_tibble() %>% 
-          select(Parameter, Rhat, ESS)
-      )
-    ) %>% 
-    select(-fit) %>% 
-    unnest(out)
-  
-  # Show a table of bad rhats
-  rhats %>%
-    filter(!near(Rhat, 1, tol = .01))
-  
-  # Draw a scatterplot of parameters with 9 worst rhats
-  # Create a tabset of this in HTML output
-  rhats_sum <- rhats %>% 
-    group_by(outcome, model) %>% 
-    arrange(outcome, model, desc(abs(Rhat))) %>% 
-    slice(1:9) %>% 
-    summarise(v = list(str_c(Parameter))) %>% 
-    ungroup() %>% 
-    right_join(fits_wb)
-  
-  dir.create("diagnostics/wb", FALSE, recursive = TRUE)
-  for (i in 1:nrow(rhats_sum)) {
-    x <- slice(rhats_sum, i)
-    path <- str_glue("diagnostics/wb/{x$outcome}-{x$model}.png")
-    png(path, width = 1200, height = 1200, res = 120)
-    pairs(x$fit[[1]]$fit, pars = x$v[[1]])
-    dev.off()
-    
-  }
-}
-```
-
-```{r gwp-model-process}
-# Extract the relevant parameters' summaries from the models
-tab_wb <- fits_wb %>% 
-  mutate(
-    out = map(
-      fit,
-      ~describe_posterior(
-        .x, 
-        effects = "all", 
-        centrality = "mean", 
-        ci = 0.95, 
-        ci_method = "ETI", 
-        test = "pd",
-        diagnostic = NULL
-      )
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  select(-CI)
-tab_wb <- tab_wb %>% 
-  # Clean parameter names
-  separate(
-    Parameter, 
-    into = c("factor", "country", "parameter"), 
-    sep = "\\[|\\]|,"
-  ) %>%
-  mutate(
-    parameter = if_else(
-      Effects == "fixed",
-      str_remove(factor, "^b_"),
-      parameter
-    ),
-    # Clean predictor name
-    Predictor = case_when(
-      parameter == "year" & model == "1" ~ "Time",
-      parameter == "i_cw" ~ "Internet",
-      parameter == "m_cw" ~ "Mobile"
-    ) %>% factor(., levels = c("Time", "Internet", "Mobile"))
-  ) %>% 
-  mutate(
-    cred = pd > .975
-  )
-
-```
-
-Figure \@ref(fig:fig-gwp-data)A describes the levels of internet and mobile broadband adoption, and the three well-being variables over time averaged over sex and age. Figure \@ref(fig:fig-gwp-data)A shows the universal global penetration of internet technologies in the past two decades, and suggests that in contrast, changes in well-being are likely to be small.
-
-```{r tab-gwp-estimates}
-avg_wb <- tab_wb %>% 
-  filter(Effects == "fixed") %>%
-  mutate(
-    Predictor = case_when(
-      factor == "b_year" & model == "1" ~ "Time Within country",
-      factor == "b_i_cw" ~ "Internet Within country",
-      factor == "b_m_cw" ~ "Mobile Within country",
-      factor == "b_i_cb" ~ "Internet Between countries",
-      factor == "b_m_cb" ~ "Mobile Between countries"
-    )
-  ) %>% 
-  drop_na(Predictor) %>% 
-  # Create a result string for table
-  mutate(
-    Estimate = str_glue(
-      "{number(Mean, .01)} [{number(CI_low, .01)}, {number(CI_high, .01)}]"
-    ),
-    pd = percent2(pd)
+tbl_average <- coefficients %>% 
+  filter(
+    level == "average",
+    sex == "average"
   ) %>% 
   select(
-    Predictor, 
+    Predictor = predictor, 
     Outcome = outcome, 
-    Estimate,
-    pd
-  ) %>% 
-  separate(Predictor, c("Predictor", "x"), extra = "merge") %>% 
-  mutate(
-    Predictor = factor(
-      Predictor, 
-      levels = c("Time", "Internet", "Mobile")
-    )
-  ) %>% 
-  arrange(Predictor, Outcome)
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  )
 
-avg_wb %>% 
+tbl_average %>% 
+  filter(Outcome %in% oo[1:3]) %>% 
   mutate(
-    Estimate = str_glue("{Estimate} ({pd})"),
-  ) %>% 
-  select(-pd) %>% 
-  pivot_wider(names_from = x, values_from = Estimate) %>% 
-  group_by(Predictor) %>% 
-  mutate(i = 1:n()) %>% 
-  ungroup() %>% 
-  mutate(
-    Predictor = as.character(Predictor),
-    Predictor = if_else(i==1, Predictor, ''),
+    Predictor = if_else(Outcome %in% oo[c(1, 4)], Predictor, ''),
     Outcome = str_replace(Outcome, "_", " ")
   ) %>% 
-  select(-i) %>% 
-  replace_na(list(`Between countries` = '')) %>% 
+  # Justify considering negative estimates
   mutate(
     across(
       3:4, 
@@ -773,239 +243,265 @@ avg_wb %>%
   ) %>% 
   apa_table(
     caption = "Well-being: Population-level estimates",
-    span_text_columns = TRUE,
+    span_text_columns = TRUE, 
+    font_size = "small",
     escape = FALSE,
-    note = "Estimates are percentage changes in outcomes associated with a one unit increase in the predictor (Time: one year; Internet and Mobile: one percent). LS: Life satisfaction, NE: Negative experiences, PE: Positive experiences. Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction)."
+    note = "Raw estimates are contrasts in outcome percentages associated with a one year or percentage increase in the predictor. Numbers indicate posterior means, [95\\%CIs], and ($p^d$; posterior probabilities of direction). Standardized estimates refer to contrasts in the z-scored outcome as function of the average year-on-year change in the predictor. The latter percentages indicate posterior probabilities inside a region of practical equivalence to zero ([-0.1, 0.1]; $p^{\\text{ROPE}}$)."
   )
 ```
 
-We found that, for the average country, life satisfaction had remained relatively stable, whereas both negative and positive experiences had increased (Figure \@ref(fig:fig-gwp-data)B). Interestingly, the increase in negative experiences was nearly sixfold to that in positive experiences. Although we found a sizeable average increase in negative experiences, these results were mixed and so did not offer convincing evidence for consistent global changes in well-being during this period of global internet technology adoption, as would be expected if the latter had broad negative consequences.
+### Trends
 
-We then turned to our main question; understanding the extent to which internet technology adoption predicted changes in well-being. We expanded the model of temporal changes to also predict well-being from within- and between-country centred per capita internet users and mobile broadband subscriptions (Figure \@ref(fig:fig-gwp-data)B, Within-country associations). The within-country associations are our key estimates of interest and describe the extent to which a one-percent increase in a country's per capita internet users (or mobile broadband subscriptions) predict that country's well-being and mental health, adjusting for linear temporal trends. 
+We found that, for the average country, life satisfaction had remained relatively stable, whereas both negative and positive experiences had increased (Table \@ref(tab:tbl-avg-wb); blue lines and ribbons in Figure \@ref(fig:fig-means-wb)A). Interestingly, the increase in negative experiences (second row in Table \@ref(tab:tbl-avg-wb)) was approximately fivefold to that in positive experiences. However, simple sign tests do not inform about the practical significance of magnitudes of changes. On the standardized scale, the coefficients were small ("Standardized estimate" in Table \@ref(tab:tbl-avg-wb)), and in all cases practically equivalent to zero with very high confidence. Because these trends were mixed across outcomes, and practically equivalent to zero in all cases, these results do not offer convincing evidence for consistent or meaningfully large global changes in well-being during this period of global internet technology adoption, as would be expected---all else being equal---if the latter had broad negative consequences. 
 
-```{r fig-gwp-data}
+### Average associations
+
+We then turned to our main question; understanding to what extent internet technology adoption predicted changes in well-being. We expanded the model of temporal changes to also predict well-being from within- and between-country centred per capita internet users or mobile broadband subscriptions (Table \@ref(tab:tbl-avg-wb), "Internet" and "Mobile"). The raw coefficients describe the extent to which a one-percent increase in within-country centered per capita internet users (or mobile broadband subscriptions) predict that country's well-being, adjusting for linear temporal trends. The standardized estimates describe the same quantities, but in terms of contrasts in the z-scored outcomes and average year-on-year percentage changes in the outcomes.
+
+```{r fig-wb-ce}
+#| cache: false
+# Conditional effects plots
+
+draw_double_axes <- function(pdata, predictor, ys = 1, ym = 0, xs = 1, outcome) {
+  ylab <- str_replace(outcome, "_", " ")
+
+  # pct_to_rate <- if_else(outcome %in% oo[1:3], 1, 1000)
+  
+  p <- pdata %>% 
+    ggplot(aes(effect1__, estimate__)) +
+    geom_ribbon(
+      aes(ymin = lower__, ymax = upper__),
+      alpha = .2, fill = "dodgerblue1"
+    ) +
+    geom_line(
+      color = "dodgerblue3",
+      linewidth = 0.75
+    ) + 
+    scale_y_continuous(
+      ylab,
+      expand = expansion(mult = 1),
+      breaks = extended_breaks(),
+      sec.axis = sec_axis(
+        trans = ~ (. - ym) / ys, 
+        breaks = extended_breaks(7),
+        name = str_glue("{ylab}\n(standardized)")
+        )
+    ) +
+    scale_x_continuous(
+      predictor,
+      breaks = extended_breaks(7),
+      minor_breaks = seq(-50, 50, by = 5),
+      sec.axis = sec_axis(
+        trans = ~ . / xs, 
+        breaks = extended_breaks(7),
+        name = str_glue("{predictor} (scaled)")
+      )
+    )
+  if (predictor == "Year") {
+    p <- p + 
+      scale_x_continuous(
+        "Year",
+        minor_breaks = seq(-5, 12, by = 1),
+        labels = ~ . + 2010
+      )
+  }
+  if (predictor %in% c("Internet", "Mobile")) {
+    p <- p %+% filter(p$data, between(effect1__, -30, 30))
+  }
+  
+  p
+}
+epred <- epred %>% 
+  mutate(
+    p = pmap(
+      list(pdata, predictor, val_sd, val_mean, xdev, outcome),
+      ~draw_double_axes(..1, ..2, ..3, ..4, ..5, ..6))
+  )
+```
+
+```{r fig-means-wb}
 #| include: true
-#| fig.height: !expr ifelse(knitr::is_latex_output(), 7.6, 5)
-#| fig.cap: "\\textbf{A.} Time courses of per capita internet users (row one), mobile broadband subscriptions (row two), and three psychological well-being outcomes (rows three to five). Lines indicate countries' yearly means of the respective variable, aggregated across sex and age. \\textbf{B.} Posterior probability distributions of population-level associations (green: between countries, red: within countries) between each of three well-being outcomes and time, per capita internet users, and per capita mobile broadband subscriptions. Estimates are percentage changes in outcomes associated with a one year or percent increase in the predictor. Points and lines indicate posterior means and 95\\%CIs, filled points indicate that zero is not among the 95\\% most credible parameter values."
+#| fig.height: 6
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: \emph{A}. Time courses of per capita internet users, mobile broadband subscriptions, and three psychological well-being outcomes. Thin dark lines indicate countries' yearly means, aggregated across sex and age. Blue lines and ribbons indicate model-implied regression lines (exploratory generalized additive model fits for Internet and Mobile broadband adoption.) \emph{B-D}. Estimated conditional means of three well-being metrics on within-country centered per-capita internet users. Primary x- (bottom) and y-axes (left) display raw predictor and outcome values, secondary axes (top, right) display z-scored outcomes and average year-on-year scaled within-country internet adoption. \emph{E-G}. Same as B-D but for mobile broadband adoption.
 
-p1 <- itu %>%
+p1_data <- itu %>%
   select(
-    region, country, year,
+    country, year,
     Internet = internet,
     Mobile = mobile,
   ) %>%
-  # Truncate mobile percentages for figure
-  mutate(Mobile = if_else(Mobile > 150, NaN, Mobile)) %>%
   pivot_longer(
     c(Internet, Mobile),
     names_to = "outcome", values_to = "val"
   ) %>% 
-  bind_rows(gwp) %>%
-  mutate(outcome = fct_inorder(str_replace(outcome, "_", "_"))) %>%
-  group_by(region, country, year, outcome) %>%
+  bind_rows(gwp, gbd) %>%
+  group_by(country, year, outcome) %>%
   summarise(mean = mean(val, na.rm = TRUE)) %>%
   ungroup() %>% 
   mutate(outcome = factor(outcome, levels = c("Internet", "Mobile", oo))) %>% 
-  mutate(year = make_date(year)) %>%
+  drop_na(mean)
+
+p1_data_model <- epred %>% 
+  filter(predictor == "Year") %>% 
+  select(predictor, outcome, pdata) %>% 
+  unnest(pdata)
+
+fig_ce_wb <- wrap_plots(
+  wrap_plots(epred$p[c(2, 5, 8)]),
+  wrap_plots(epred$p[c(3, 6, 9)]),
+  ncol = 1
+) & theme(
+  panel.grid.major = element_line(linewidth = .1, color = "grey50")
+)
+
+p1 <- p1_data %>% 
+  filter(!(outcome %in% oo[4:6])) %>% 
   ggplot(aes(year, mean)) +
   scale_y_continuous(
     "Value (%)",
     # Display percentages
     breaks = pretty_breaks(),
-    expand = expansion(.05)
+    expand = expansion(.01)
   ) +
-  scale_x_date(
+  scale_x_continuous(
     "Year",
-    breaks = make_date(c(2000, 2005, 2010, 2015, 2020)),
-    date_labels = "'%y",
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20"),
     expand = expansion(.02)
+  ) +
+  coord_cartesian(ylim = c(0, 100)) +
+  geom_smooth(
+    data = filter(p1_data, outcome %in% c("Internet", "Mobile")),
+    method = "gam",
+    col = "dodgerblue3",
+    fill = alpha("dodgerblue1", .3),
+    linewidth = 0.7
+  ) +
+  geom_lineribbon(
+    data = p1_data_model %>% filter(outcome %in% oo[1:3]),
+    aes(y = estimate__, ymin = lower__, ymax = upper__, x = year + 2010),
+    col = "dodgerblue3",
+    fill = alpha("dodgerblue1", .3),
+    linewidth = 0.7
   ) +
   geom_line(
     aes(
       group = interaction(country, outcome)
     ),
-    size = .05, col = "dodgerblue3"
+    linewidth = .02, alpha = .2
   ) +
-  facet_grid(
-    outcome ~ region,
-    scales = "free_y",
+  facet_wrap(
+    "outcome",
+    scales = "free_x",
+    nrow = 1,
     labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
   ) +
   theme(
     legend.position = "none"
   )
-
-x <- fits_wb %>% 
-  mutate(out = map(fit, ~spread_draws(.x, `^b_.*`, regex = TRUE))) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  select(outcome, model, .draw, b_year, matches("^b_[i|m]_c[w|b]$")) %>% 
-  pivot_longer(starts_with("b_"), names_to = "parameter") %>% 
-  mutate(
-    Predictor = case_when(
-      parameter == "b_year" & model == "1" ~ "Time Within country",
-      parameter == "b_i_cw" ~ "Internet Within country",
-      parameter == "b_m_cw" ~ "Mobile Within country",
-      parameter == "b_i_cb" ~ "Internet Between countries",
-      parameter == "b_m_cb" ~ "Mobile Between countries"
-    )
-  ) %>% 
-  drop_na(Predictor, value) %>% 
-  separate(Predictor, c("Predictor", "x"), extra = "merge") %>% 
-  mutate(
-    Predictor = factor(
-      Predictor, 
-      levels = c("Time", "Internet", "Mobile")
-    )
-  )
-p2 <- x %>%   
-  ggplot(aes(value, fct_rev(Predictor), fill = x)) +
-  scale_color_brewer(
-    "Association", palette = "Set2", aesthetics = c("fill", "color")
-  ) +
-  scale_shape_manual(values = c(21, 19)) +
-  scale_x_continuous(
-    "Estimated linear association",
-    breaks = extended_breaks()
-  ) +
-  stat_halfeye(
-    aes(shape = after_stat(sign(xmax) == sign(xmin))),
-    position = position_dodge(.15), 
-    normalize = "xy", 
-    height = .8,
-    point_interval = "mean_qi",
-    fatten_point = 3,
-    point_fill = "white",
-    size = .25,
-    slab_alpha = .75,
-    adjust = 1.5,
-    .width = .95
-    ) +
-  facet_wrap(
-    "outcome", 
-    labeller = labeller(
-      .cols = as_labeller(~str_replace(., "_", " "))
-    ),
-    scales = "free_x"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y = element_blank(),
-    panel.grid.major.x = element_line(
-      color = "black", linetype = "dotted", size = .1
-    )
-  )
-
-(p1 / p2) + 
-  plot_layout(heights = c(8, 2)) +
+(p1 / fig_ce_wb) +
+  plot_layout(heights = c(22, 78)) +
   plot_annotation(tag_levels = "A")
 ```
 
-```{r}
-fits_wb %>% 
-  filter(model != 1) %>% 
+Per capita internet users did not credibly predict any of the three well-being metrics: A one percent increase in per capita internet users predicted small increases in life satisfaction (Figure \@ref(fig:fig-means-wb)B), negative experiences (Figure \@ref(fig:fig-means-wb)C), and positive experiences (Figure \@ref(fig:fig-means-wb)D) for the average country, but the probabilities of direction ($p^d$) did not exceed the 95% threshold. Thus, based on simple sign tests, per-capita internet adoption was not a credible predictor of well-being. Moreover, in standardized terms, all three associations were squarely within the [-0.1, 0.1] ROPE: An average year-on-year increase in internet adoption predicted smaller than [-0.1, 0.1] changes in life satisfaction, negative and positive experiences with greater than 99.9% posterior probability. Thus, there was evidence against a practically meaningfully large association between per capita internet adoption and all three well-being metrics. 
+
+In addition, (within country centered) per capita mobile broadband subscriptions were at best weak predictors of well-being. While per capita mobile broadband subscriptions predicted life satisfaction positively (0.06%, $p^d$ > 99.9%; Figure \@ref(fig:fig-means-wb)E), this association was negative and not credibly different from zero for negative (Figure \@ref(fig:fig-means-wb)F) or positive experiences (Figure \@ref(fig:fig-means-wb)G). In standardized terms, all three associations between per capita mobile broadband adoption and well-being were credibly equivalent to zero (Table \@ref(tab:tbl-avg-wb), "Standardized estimate").
+
+In sum, we found that internet technology adoption did not predict life satisfaction, or negative or positive experiences to a meaningfully large degree.
+
+### Countries
+
+```{r tbl-cb-wb}
+coefficients %>% 
+  filter(
+    outcome %in% oo[1:3],
+    level == "cb",
+    predictor != "Year"
+  ) %>% 
   mutate(
-    sigma = map_dbl(
-      fit,
-      ~mean(as.data.frame(.x, variable = "sigma")$sigma)
+    predictor = if_else(outcome == "Life_satisfaction", predictor, ''),
+    outcome = str_replace(outcome, "_", " ")
+  ) %>% 
+  select(
+    Predictor = predictor, 
+    Outcome = outcome, 
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  ) %>% 
+  mutate(
+    across(
+      3:4, 
+      ~if_else(
+        str_starts(., "-"), 
+        ., 
+        paste0("\\phantom{-}", .)
+      )
     )
+  ) %>% 
+  apa_table(
+    caption = "Well-being: Between-country associations",
+    span_text_columns = TRUE,
+    font_size = "small",
+    escape = FALSE,
+    placement = "htb",
+    note = "Raw estimates are contrasts in outcome percentages associated with a one percentage increase in the predictor. Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction). Standardized estimates refer to contrasts in the z-scored outcome as function of the average year-on-year change in the predictor. The latter percentages indicate posterior probabilities inside a region of practical equivalence to zero ([-0.1, 0.1])."
   )
-itu %>% 
-  pivot_longer(internet:mobile) %>% 
-  group_by(country, name) %>% 
-  mutate(increase = value - lag(value)) %>% 
-  group_by(name) %>% 
-  summarise(mean_yearly_increase = mean(increase, na.rm = TRUE))
 ```
 
-Internet adoption did not predict any outcome at the 95% credibility level, but a 1% increase in per capita internet users predicted a `r avg_wb[6, 4]` increase in negative experiences for the average country with `r avg_wb[6, 5]` posterior probability of direction. Mobile broadband, on the other hand, positively predicted life satisfaction (`r avg_wb[10, 4]`), with greater evidence for direction (`r avg_wb[10, 5]`). In light of substantial residual standard deviations ranging from about 6 to 8 between predictors and outcomes, and average yearly increases in internet technology adoption (internet = 2.7%, mobile = 5.8%) the observed associations were very small.
+Our model also assessed the extent to which internet technology adoption predicted well-being between countries. These between-country associations indicated, with high confidence, that countries with greater average levels of internet and mobile broadband adoption tended to report greater average levels of life satisfaction and positive experiences, and lower average levels of negative experiences (Table \@ref(tab:tbl-cb-wb)). However, based on standardized magnitudes and ROPE tests, only the positive association between mobile broadband adoption and life satisfaction was credibly different from zero with >90% confidence. Other between-country associations were equivalent to zero on the standardized scale. To be clear, between-country associations are likely to reflect multiple other causes, such as socioeconomic factors and levels of inequality, impinging on both well-being and internet technology adoption. For example while wealthier nations are likely to have greater internet coverage, they also tend to have greater healthcare coverage, which in turn is likely to affect levels of well-being. 
 
-```{r}
-tmpr <- fits_wb %>% 
-  filter(model > 1) %>% 
-  mutate(
-    sdx = map_dbl(fit, ~sd(.x$data[,4])),
-    sdy = map_dbl(fit, ~sd(.x$data[,1]))
-  ) %>% 
-  mutate(
-    x = map(
-      fit, 
-      ~as_draws_df(.x, variable = "b_[i|m]_cw$", regex = TRUE) %>% 
-        rename(b = 1) %>% 
-        mutate(r = b * (sd(.x$data[,4]) / sd(.x$data[,1])), .keep = "unused") %>% 
-        describe_posterior(
-          centrality = "mean", 
-          ci = 0.95, 
-          ci_method = "ETI", 
-          test = "pd",
-          diagnostic = NULL
-        ) %>% 
-        as_tibble())
-  ) %>% 
-  mutate(model = factor(model, labels = c("Internet", "Mobile"))) %>% 
-  unnest(x) %>% 
-  mutate(
-    result = str_glue(
-      "{number(Mean, .001)} [{number(CI_low, .001)}, {number(CI_high, .001)}]"
-    ),
-    .keep = "unused"
-  ) %>% 
-  select(outcome, model, result)
-tmpr
-```
+```{r fig-country-wb}
+#| cache: true
+#| include: true
+#| fig.height: 6.4
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: "Country-specific yearly changes in three well-being outcomes (top row), and their associations with per capita internet users (second row) and mobile broadband subscriptions (third row). Points and lines indicate individual countries' posterior means and 95\\% CIs. Countries are sorted from the most negative to most positive estimate. Filled points indicate that the parameter's 95\\% credibility interval excludes zero (in both panels). Raw associations (bottom x-axes) indicate changes in the outcome percentage as function of percentage (or one year) change in the predictor. Scaled associations (top x-axes) indicate changes in standardized outcome as function of the average year-on-year change in the predictor. "
 
-In addition to these recommended raw associations [@baguleyStandardizedSimpleEffect2009], we also computed the standardized average associations ($\alpha_4(\frac{\sigma_x}{\sigma_y})$). In line with the unstandardized coefficients reported above, the standardized associations were small according to common guidelines: (life satisfaction & internet = `r tmpr$result[1]`, life satisfaction & mobile = `r tmpr$result[2]`, negative experiences & internet = `r tmpr$result[3]`, negative experiences & mobile = `r tmpr$result[4]`, positive experiences & internet = `r tmpr$result[5]`, positive experiences & mobile = `r tmpr$result[6]`).
-
-```{r fig-gwp-country}
-#| cache: false
-figure_country <- function(data) {
-  data %>% 
-    # Show countries and main relations
-    filter(factor == "r_country") %>% 
-    drop_na(Predictor) %>% 
-    # Take out countries with only time association from this figure
-    add_count(outcome, country) %>% 
-    filter(n > 1) %>% 
+figure_country <- function(y = "Life_satisfaction", x = "Year") {
+  
+  d <- coefficients %>% 
+    filter(outcome == y, predictor == x, level == "country", sex == "average") %>% 
+    left_join(z)
+  
+  p <- d %>% 
     # Arrange per panel
-    group_by(Predictor, outcome) %>% 
-    arrange(Predictor, outcome, Mean) %>% 
+    group_by(predictor, outcome) %>% 
+    arrange(predictor, outcome, mean) %>% 
     mutate(y = 1:n()) %>% 
-    ggplot(aes(Mean, y, col = cred)) +
+    ggplot(aes(mean, y, col = pd > .975)) +
+    geom_vline(xintercept = 0, linewidth = .33, linetype = "dashed", col = "grey70") +
     scale_color_manual(values = c("dodgerblue1", "dodgerblue3")) +
     scale_y_discrete(
       "Country",
-      # Fix country names
-      labels = ~str_replace_all(., "\\.", " ") %>% 
-        str_replace_all(., "’", "'"),
       expand = expansion(.015)
     ) +
     scale_x_continuous(
-      "Estimated linear association",
+      "Raw association",
       breaks = extended_breaks(6), 
-      expand = expansion(c(0.01))
+      expand = expansion(c(0.01)),
+      sec.axis = sec_axis(
+        trans = ~ . * unique(d$zfactor), 
+        breaks = extended_breaks(7),
+        name = "Scaled association"
+      )
     ) +
     scale_shape_manual(values = c(21, 19)) +
     scale_linetype_manual(values = c(1, 1, 1)) +
-    geom_linerangeh(
-      size = .1,
-      aes(xmin = CI_low, xmax = CI_high, linetype = cred)
-    ) +
-    geom_point(
-      aes(shape = cred), 
-      size = .55, fill = "white", stroke = .2
+    geom_pointinterval(
+      aes(xmin = q2.5, xmax = q97.5, shape = pd > 0.975),
+      fill = "white",
+      interval_size_range = c(.1, .1),
+      fatten_point = 8,
+      stroke = .2
     ) +
     guides(
       linetype = "none", 
       shape = "none",
       color = guide_legend(override.aes = list(size = .5, stroke = 1))
-    ) +
-    facet_grid2(
-      Predictor~outcome,
-      scales = "free",
-      independent = "all",
-      labeller = labeller(
-        .cols = as_labeller(~str_replace(., "_", " "))
-      )
     ) +
     theme(
       axis.text.y = element_blank(),
@@ -1015,225 +511,293 @@ figure_country <- function(data) {
       ),
       legend.position = "none"
     )
+  
+  if (y %in% oo[c(3, 6)]) {
+    p <- p +
+      facet_grid(
+        rows = vars(predictor), scales = "free_y",
+        labeller = as_labeller(~str_replace(., "_", " "))
+      ) +
+      theme(
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()
+        )
+  }
+  
+  if (y %in% oo[c(2, 5)]) {
+    p <- p +
+      theme(
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()
+        )
+  }
+  if (x == "Year") {
+    p <- p +
+      facet_grid(
+        cols = vars(outcome), scales = "free_y",
+        labeller = as_labeller(~str_replace(., "_", " "))
+      )
+  }
+  if (y %in% oo[c(3, 6)] & x == "Year") {
+    p <- p +
+      facet_grid(
+        rows = vars(predictor),
+        cols = vars(outcome),
+        scales = "free_y",
+        labeller = as_labeller(~str_replace(., "_", " "))
+      )
+  }
+  
+  p
 }
-p_country_wb <- figure_country(tab_wb)
+tmp <- distinct(coefficients, outcome, predictor) %>% 
+  distinct(outcome, predictor) %>% 
+  filter(outcome %in% oo[1:3]) %>% 
+  arrange(predictor, outcome) %>% 
+  mutate(p = map2(outcome, predictor, ~figure_country(.x, .y))) %>% 
+  pull(p)
+wrap_plots(tmp)
 ```
 
-```{r gwp-demographics}
-wb_demo <- fits_wb %>% 
-  mutate(
-    x = factor(model, labels = c("year", "i_cw", "m_cw")),
+```{r}
+tmp <- coefficients %>% 
+  filter(
+    predictor == "Year", 
+    outcome == "Life_satisfaction", 
+    level == "country", 
+    sex == "average"
   ) %>% 
+  arrange(mean)
+tmp$Raw[[1]]
+tmp$Raw[[nrow(tmp)]]
+```
+
+While these trends and associations are meaningful summaries of the average country among the 168 examined, or associations between them, they do not represent specific countries which might have unique patterns of associations. Figure \@ref(fig:fig-country-wb) describes the country-level trends over time (top row) and associations linking per capita internet users (middle row) and mobile broadband subscriptions (bottom row) to each of the three outcomes (columns). We observed that all three were highly variable across countries.
+
+First, there appeared to be no universal temporal trend that applied to all countries. Instead, the country-specific estimates varied from substantial decreases (greatest decrease in e.g. life satisfaction: `r tmp$Raw[[1]]`) to large increases in well-being (greatest increase in e.g. life satisfaction: `r tmp$Raw[[nrow(tmp)]]`). We observed similar variability in country-specific associations linking well-being to internet adoption and to mobile broadband adoption (Figure \@ref(fig:fig-country-wb)).
+
+```{r tbl-country-prop-wb}
+tbl_props <- coefficients %>% 
+  filter(level == "country", sex == "average") %>% 
   mutate(
-    out = map2(
-      fit, x, 
-      ~bind_rows(
-        world = hypothesis(
-          .x, 
-          str_glue("{.y} + {.y}:sex1 * {c(-1, 1)} = 0")
-        )$hypothesis,
-        age = hypothesis(
-          .x, 
-          str_glue("{.y} + {.y}:sex1 * {c(-1, 1)} = 0"),
-          scope = "coef", group = "age"
-        )$hypothesis
-      )
+    Sign = case_when(
+      pd > .975 & sign(mean)==-1 ~ "Negative",
+      pd > .975 & sign(mean)==1 ~ "Positive",
+      TRUE ~ "Indecisive"
+    ),
+    ROPE = case_when(
+      rope < .05 & sign(mean)==-1 ~ "Negative",
+      rope < .05 & sign(mean)==1 ~ "Positive",
+      rope > .95 ~ "Null",
+      TRUE ~ "Indecisive"
     )
   ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  mutate(Sex = if_else(str_detect(Hypothesis, "-1"), "Male", "Female")) %>% 
-  mutate(Group = if_else(is.na(Group), Sex, Group)) %>% 
+  select(predictor, outcome, group, Sign, ROPE) %>% 
+  pivot_longer(c(Sign, ROPE)) %>% 
+  count(predictor, outcome, name, value) %>% 
   mutate(
-    predictor = factor(
-      model, 
-      levels = 1:3, 
-      labels = c("Time", "Internet", "Mobile")
-    )
+    n = str_glue("{n} ({percent(n/sum(n), 1)})"), 
+    .by = c(outcome, predictor, name)
   ) %>% 
-  mutate(cred = sign(CI.Lower) == sign(CI.Upper)) %>% 
-  mutate(
-    Group = factor(Group, levels = c("Female", "Male", levels(dat$age)))
+  pivot_wider(names_from = value, values_from = n) %>% 
+  mutate(across(c(Indecisive, Negative, Null, Positive), ~replace_na(., "0 (0%)"))) %>% 
+  rename(Predictor = predictor, Outcome = outcome, Test = name) %>% 
+  arrange(Predictor, Outcome, desc(Test)) %>%
+  pivot_wider(
+    names_from = Test, 
+    values_from = c(Indecisive, Negative, Null, Positive), 
+    names_vary = "slowest"
+  ) %>% 
+  select(-Null_Sign)
+
+tbl_props %>% 
+  filter(Outcome %in% oo[1:3]) %>% 
+    mutate(
+    Outcome = fct_inorder(str_replace(Outcome, "_", " "))
+  ) %>% 
+  as.data.frame() %>% 
+  setNames(str_remove(names(.), "_ROPE") %>% str_remove("_Sign")) %>% 
+  apa_table(
+    placement = "htb",
+    span_text_columns = TRUE,
+    col_spanners = list(` ` = c(1, 2), `Sign test` = c(3, 5), `ROPE` = c(6, 9)),
+    font_size = "small",
+    caption = "Well-being: Country-specific test summary",
+    note = "Numbers indicate counts and (percentages) of countries with different decisions either based on a sign test or a ROPE of [-0.1, 0.1] on the standardized scale."
   )
 ```
 
-```{r fig-gwp-demographics}
-#| cache: false
-figure_demographics <- function(data) {
-  data %>% 
-    ggplot(aes(Estimate, fct_rev(Group), col = Sex, shape = cred)) +
+To summarize these country-specific associations, we calculated proportions of countries with credibly positive, negative, null, and inconclusive associations based on either simple sign tests on the raw scale ($p^d$ > 97.5%), or ROPE tests on the standardized scale ($p^{\text{ROPE}}$ > 95%). Table \@ref(tab:tbl-country-prop-wb) shows that the association between internet adoption and life satisfaction was credibly positive, based on sign tests, for `r tbl_props$Positive_Sign[7]` countries, negative for `r tbl_props$Negative_Sign[7]` countries, and indecisive for `r tbl_props$Indecisive_Sign[7]` countries. Evaluated against a region of practical equivalence (to zero) of [-0.1, 0.1], `r tbl_props$Null_ROPE[7]` countries showed credibly null associations between internet adoption and life satisfaction, whereas the result was indecisive for `r tbl_props$Indecisive_ROPE[7]` countries, positive for `r tbl_props$Positive_ROPE[7]` and negative for `r tbl_props$Negative_ROPE[7]` countries. The country-specific associations between negative and positive experiences and per capita internet adoption were broadly similar to those with life satisfaction: When evaluated against a ROPE on the standardized scale, the majority of associations were either indecisive or credibly null. Moreover, the results regarding country-specific associations between mobile broadband adoption and well-being were broadly similar: The majority of associations were either indecisive or credibly null.
+
+This heterogeneity and lack of consistent associations across countries should qualify any inferences concerning associations for the average country, and is further evidence against the idea that the adoption of internet or mobile broadband has had uniform global negative effects on well-being. 
+
+### Demographics
+
+```{r fig-demographics-wb}
+#| cache: true
+#| include: true
+#| fig.height: 6.4
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: "Age- and sex-specific (green: female, red: male) changes in three well-being outcomes (top row), and their associations with per capita internet users (middle row) and mobile broadband subscriptions (bottom row). Bottom x-axes indicate raw associations; top x-axes are scaled associations."
+
+figure_demo <- function(x = "Year", y = "Life_satisfaction") {
+  
+  # Get coefficients for males and females for average and each age
+  d <- coefficients %>% 
+    filter(
+      outcome == y, 
+      predictor == x, 
+      level %in% c("average", "age"), 
+      sex %in% c("male", "female")
+    ) %>%
+    mutate(group = if_else(group == "Average", str_to_title(sex), group)) %>% 
+    left_join(z) %>% 
+    mutate(
+      group = fct_rev(fct_relevel(group, "Female", "Male"))
+    )
+  
+  p <- d %>% 
+    ggplot(aes(mean, group, col = sex, shape = pd > 0.975)) +
+    geom_vline(xintercept = 0, linewidth = .2, linetype = "dashed", col = "grey70") +
     scale_color_brewer(palette = "Set2") +
-    scale_shape_manual(values = c(21, 19)) +
-    # Ensure zero shows
-    geom_blank(aes(x = 0)) +
-    scale_x_continuous(
-      "Estimated linear association",
-      breaks = extended_breaks(5),
-      expand = expansion(.15)
-    ) +
-    geom_linerangeh(
-      aes(xmin = CI.Lower, xmax = CI.Upper),
-      size = .3,
-      position = position_dodge2v(
-        height = .8,
-        padding = 1,
-        reverse = TRUE
-      )
-    ) +
-    geom_point(
-      size = 0.9,
+    scale_shape_manual(values = c(21, 19), breaks = c(FALSE, TRUE)) +
+    geom_pointinterval(
+      aes(xmin = q2.5, xmax = q97.5),
       fill = "white",
-      position = position_dodge2v(
-        height = .8,
-        padding = 1,
-        reverse = TRUE
-      )
+      interval_size_range = c(.4, .4),
+      fatten_point = 3,
+      stroke = .75,
+      position = position_dodgejust()
     ) +
     guides(shape = "none") +
-    facet_grid2(
-      rows = vars(predictor),
-      cols = vars(outcome),
-      scales = "free_x", independent = "x",
-      labeller = as_labeller(~str_replace(., "_", " "))
+    scale_x_continuous(
+      "Raw association",
+      breaks = extended_breaks(6), 
+      expand = expansion(c(0.05)),
+      sec.axis = sec_axis(
+        trans = ~ . / unique(d$val_sd) * unique(d$xdev), 
+        breaks = extended_breaks(),
+        name = "Scaled association"
+      )
     ) +
     theme(
       axis.title.y = element_blank(),
-      legend.position = "none",
-      panel.grid.major.x = element_line(
+      panel.grid.major = element_line(
         color = "black", linetype = "dotted", size = .1
-      )
+      ),
+      legend.position = "none"
     )
+  
+  if (y %in% oo[c(3, 6)]) {
+    p <- p +
+      facet_grid(
+        rows = vars(predictor),
+        labeller = as_labeller(~str_replace(., "_", " "))
+      ) +
+      theme(
+        # axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()
+        )
+  }
+  
+  if (y %in% oo[c(2, 5)]) {
+    p <- p +
+      theme(
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()
+        )
+  }
+  
+  if (x == "Year") {
+    p <- p +
+      facet_grid(
+        cols = vars(outcome),
+        labeller = as_labeller(~str_replace(., "_", " "))
+      )
+  }
+  if (y %in% oo[c(3, 6)] & x == "Year") {
+    p <- p +
+      facet_grid(
+        rows = vars(predictor),
+        cols = vars(outcome),
+        labeller = as_labeller(~str_replace(., "_", " "))
+      )
+  }
+  
+  p
 }
 
-p_demo_wb <- figure_demographics(wb_demo)
+tmp <- coefficients %>% 
+  distinct(predictor, outcome) %>% 
+  filter(outcome %in% oo[1:3]) %>% 
+  arrange(predictor, outcome) %>% 
+  mutate(p = map2(predictor, outcome, ~figure_demo(.x, .y))) %>% 
+  pull(p)
+wrap_plots(tmp) &
+  ylab("Demographic group")
 ```
 
-Our model also measured the extent to which internet technology adoption predicted well-being between countries. These between-country associations indicated, with high confidence, that countries with greater average levels of internet and mobile broadband adoption tended to report greater average levels of life satisfaction and positive experiences, and lower average levels of negative experiences (Figure \@ref(fig:fig-gwp-data)B, Between-country associations). However, this pattern is likely to reflect multiple other causes, such as socioeconomic factors and levels of inequality, impinging on both well-being and internet technology adoption. For example while wealthier nations are likely to have greater internet coverage, they also tend to have greater healthcare coverage, which in turn is likely to affect levels of well-being. 
-
-These trends and associations are meaningful summaries of the average country among the `r length(unique(gwp$country))` examined, but do not represent specific countries which might have unique patterns of associations. Figure \@ref(fig:fig-gwp-parameters)A describes the country-level trends over time and associations linking per capita internet users and mobile broadband subscriptions to each of the three outcomes. There appeared to be no universal temporal trends that apply to all countries, whose estimates varied from significant decreases to substantial increases in well-being. Moreover, the associations between internet technology adoption and well-being varied significantly across countries, with some reporting substantial positive associations, and others large negative associations.
-
-```{r fig-gwp-parameters}
-#| cache: false
-#| include: true
-#| fig.height: !expr ifelse(knitr::is_latex_output(), 8.5, 6.8)
-#| fig.env: "figure*"
-#| fig.cap: "\\textbf{A.} Country-specific yearly changes in three well-being outcomes (Time), and their associations with per capita internet users (Internet) and mobile broadband subscriptions (Mobile). Points and lines indicate individual countries' posterior means and 95\\% CIs. Countries are sorted from the most negative to most positive estimate. Filled points indicate that the parameter's 95\\% credibility interval excludes zero (in both panels). We include a table of all countries' estimates in the online materials. \\textbf{B.} Age- and sex-specific (green: female, red: male) changes in three well-being outcomes (top row), and their associations with per capita internet users (middle row) and mobile broadband subscriptions (bottom row)."
-((p_country_wb /
-  p_demo_wb + theme(axis.text.y = element_text(size = rel(0.6)))) &
-  theme(text = element_text(size = 8))) +
-  plot_layout(heights = c(5.5, 4.5)) +
-  plot_annotation(tag_levels = "A")
-```
-
-```{r tab-sds}
-#| include: true
-#| eval: false
-tab_wb %>% 
-  filter(str_starts(factor, "sd_")) %>% 
-  separate(factor, c("factor", "term"), sep = "__") %>% 
-  filter(factor %in% c("sd_age", "sd_country")) %>% 
-  filter(
-    model == "1" & term == "year" | 
-      model != "1" & str_ends(term, "_cw")
-  ) %>% 
-  mutate(
-    # years, percentages
-    across(c(Mean:CI_high), ~if_else(model=="1", ., ./100)),
-    across(c(Mean:CI_high), ~number(., .001)),
-    res = as.character(str_glue("{Mean} [{CI_low}, {CI_high}]")),
-    Outcome = str_replace(outcome, "_", " "),
-    Predictor = factor(model, labels = c("Time", "Internet", "Mobile")),
-    variable = case_when(
-      factor == "sd_age" ~ "SD (age)",
-      factor == "sd_country" ~ "SD (country)"
-    )
-  ) %>% 
-  select(
-    Predictor, Outcome, variable, res
-  ) %>% 
-  pivot_wider(names_from = variable, values_from = res) %>% 
-  mutate(Outcome = fct_inorder(Outcome)) %>% 
-  select(Predictor, Outcome, `SD (country)`, everything()) %>% 
-  arrange(Predictor, Outcome) %>% 
-  mutate(
-    Predictor = as.character(Predictor),
-    Predictor = if_else(Outcome == "Life satisfaction", Predictor, "")
-  ) %>%
-  apa_table(
-    font_size = "scriptsize",
-    placement = "htb",
-    span_text_columns = FALSE,
-    note = "Numbers indicate the standard deviations [95%CI] of the distributions of associations in the population of all countries."
-  )
-```
-
-```{r tab-gwp-props}
-wb_props <- tab_wb %>% 
-  filter(factor == "r_country") %>% 
-  drop_na(Predictor) %>% 
-  mutate(
-    Outcome = str_replace(outcome, "_", " "),
-    # Predictor = as.character(Predictor),
-    # Predictor = if_else(Outcome == "Life satisfaction", Predictor, "")
-  )
-wb_props2 <- wb_props %>% 
-  mutate(
-    x = case_when(
-      cred & sign(Mean)==-1 ~ "Negative",
-      cred & sign(Mean)==1 ~ "Positive",
-      TRUE ~ "Null"
-    )
-  ) %>% 
-  count(Outcome, Predictor, x) %>% 
-  arrange(Predictor, Outcome) %>% 
-  group_by(Outcome, Predictor) %>% 
-  mutate(n = str_glue("{n} ({percent(n/sum(n), 1)})")) %>%  
-  pivot_wider(names_from = x, values_from = n) %>% 
-  mutate(across(c(Negative, Null, Positive), ~replace_na(., "0%"))) %>% 
-  select(Predictor, Outcome, Negative, Null, Positive)
-wb_props2 %>%   
-  group_by(Predictor) %>% 
-  mutate(i = 1:n()) %>% 
-  ungroup() %>% 
-  mutate(
-    Predictor = as.character(Predictor),
-    Predictor = if_else(i==1, Predictor, '')
-  ) %>% 
-  select(-i) %>% 
-  apa_table(
-    placement = "htb",
-    span_text_columns = FALSE,
-    caption = "Well-being: Country-specific test summary",
-    note = "Numbers indicate counts and (percentages) of countries with different sign test results. Percentages may not add up to 100% because of rounding."
-  )
-```
-
-To summarize these country-specific associations, we calculated proportions of countries with credibly positive and negative associations. Above we identified that internet adoption predicted small increases in negative experiences for the average country with `r avg_wb$pd[6]` confidence. Table \@ref(tab:tab-gwp-props) shows that this association was credibly positive (negative) for `r str_sub(wb_props2[5,5], 1, 2)` (`r str_sub(wb_props2[5,3], 1, 2)`) countries. `r str_sub(wb_props2[4,5], 1, 2)` (`r str_sub(wb_props2[4,3], 1, 2)`) countries had positive (negative) associations between life satisfaction and per capita internet users. The associations linking positive experiences to per capita internet users were more often inconclusive. We observed similar numbers regarding associations linking well-being to per capita mobile broadband subscriptions: `r str_sub(wb_props2[7,5], 1, 2)` (`r str_sub(wb_props2[7,3], 1, 2)`) countries had a positive (negative) association between mobile broadband adoption and life satisfaction, whereas the numbers were only `r str_sub(wb_props2[8,5], 1, 2)` (`r str_sub(wb_props2[8,3], 1, 2)`) and `r str_sub(wb_props2[9,5], 1, 2)` (`r str_sub(wb_props2[9,3], 1, 1)`) for negative and positive experiences, respectively. This heterogeneity and lack of consistent associations across countries should qualify any inferences concerning global associations and is evidence against the idea that the adoption of internet or mobile broadband has had uniform global negative effects on well-being. 
-
-These global and country-specific analyses are informative but shed no light on how internet and mobile broadband adoption might be differently associated with well-being across demographic groups. So we then examined variation across age and sex (for the average country) in the relations linking internet and mobile broadband adoption to psychological well-being. Age- and sex-specific estimates, for the average country, are shown in Figure \@ref(fig:fig-gwp-parameters)B. 
+These global and country-specific analyses are informative but shed no light on how internet and mobile broadband adoption might be differently associated with well-being across demographic groups. So we then examined variation across age and sex (for the average country) in the relations linking internet and mobile broadband adoption to psychological well-being. Age- and sex-specific estimates, for the average country, are shown in Figure \@ref(fig:fig-demographics-wb). 
 
 ```{r}
-tmp <- tab_wb %>% 
-  filter(
-    Effects == "fixed", 
-    str_detect(parameter, ":sex1"), 
-    !(parameter=="year:sex1" & model != 1)
-  ) %>% 
-  mutate(
-    x = str_glue(
-      "{number(Mean, .01)} [{number(CI_low, .01)}, {number(CI_high, .01)}]"
-      ), 
-    .keep = "unused"
-  ) %>% 
-  select(outcome, parameter, x, pd)
-tmp
+tmp <- coefficients %>% 
+  filter(sex == "female-male", outcome == "Life_satisfaction", level == "average")
 ```
 
-We found that, for the average country, life satisfaction had increased more for females (`r tmp$x[1]`), and that both per capita internet users and mobile broadband subscriptions predicted slightly greater increases in life satisfaction for females than males (Internet: `r tmp$x[2]`; Mobile: `r tmp$x[3]`). Negative experiences had increased the least for youngest age group in our data, but slightly more overall for females than males (`r tmp$x[4]`). Similarly, positive experiences had increased most for the youngest and oldest age groups, and somewhat more overall for females (`r tmp$x[7]`). Overall, these demography-specific trends and associations indicated no clear patterns specific to a particular demographic group. Neither did they support the commonly offered narrative that young individuals, particularly young women, have experienced disproportionately large decrements in well-being in association with the adoption of internet technologies.
+We found that, for the average country, life satisfaction had increased more for females (`r tmp$Raw[[1]]`), but, on the standardized scale, this interaction term was very small and practically equivalent to zero with near absolute certainty (`r tmp$Scaled[[1]]`). Increases in negative and positive experiences were also greater for females, and while the sign test indicated greater increases in negative experiences for women, both interaction terms were within the ROPE with near absolute certainty. We present these results in detail in Table \@ref(tab:tbl-sex1-wb).
+
+```{r tbl-sex1-wb}
+coefficients %>% 
+  filter(
+    level == "average",
+    sex == "female-male",
+    outcome %in% oo[1:3]
+  ) %>% 
+  mutate(
+    predictor = if_else(outcome == "Life_satisfaction", predictor, ''),
+    outcome = str_replace(outcome, "_", " ")
+  ) %>% 
+  select(
+    Predictor = predictor, 
+    Outcome = outcome, 
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  ) %>% 
+  # Justify considering negative estimates
+  mutate(
+    across(
+      3:4, 
+      ~if_else(
+        str_starts(., "-"), 
+        ., 
+        paste0("\\phantom{-}", .)
+      )
+    )
+  ) %>% 
+  apa_table(
+    caption = "Well-being: Predictor-sex interactions",
+    span_text_columns = TRUE,
+    placement = "htb",
+    font_size = "small",
+    escape = FALSE,
+    note = "Parameter estimates indicate differences between males and females."
+  )
+```
+
+There were no further differences in associations linking well-being and (mobile) broadband adoption between men and women when evaluated either with sign tests (Table \@ref(tab:tbl-sex1-wb), "Raw estimate") or equivalence tests against [-0.1, 0.1] (Table \@ref(tab:tbl-sex1-wb), "Standardized estimate"). Overall, these demography-specific trends and associations indicated no clear patterns specific to a particular demographic group. Neither did they support the commonly offered narrative that young individuals, particularly young women, have experienced disproportionately large decrements in well-being in association with the adoption of internet technologies.
 
 ## Discussion
 
-We examined the extent to which three indicators of psychological well-being had changed over time and in association with per capita internet users and mobile broadband subscriptions. Across 168 countries and 16 years, we found mixed support for changes in well-being over time and in association with internet technology adoption. Whereas life satisfaction, on average, had not changed over time or as a function of either per capita internet users, it was positively predicted by per capita mobile broadband subscriptions. We found that both negative and positive experiences had increased, but that their associations with internet technology adoption were not credibly different from zero at the 95% confidence level. Furthermore, there were large variations among these patterns of results between the countries studied, suggesting no consistent connection between internet technology adoption and country-level well-being. Finally, while some sex- and age-based differences emerged, none supported the idea that young individuals, or young women particularly, were the most at-risk group. Nevertheless, this analysis was necessarily constrained to a limited range of available outcomes reflecting subjective well-being [e.g. @jebbSubjectiveWellBeingWorld2020]. In Study 2, we extended our investigation to mental health outcomes.
+We examined the extent to which three indicators of psychological well-being had changed over time and in association with per capita internet users and mobile broadband subscriptions. Across 168 countries and 16 years, we found little to no support for changes in well-being over time and in association with internet technology adoption. Although we found that both negative and positive experiences had increased, based on simple sign tests, these changes were small enough to be credibly practically equivalent to zero when evaluated against a smallest association magnitude of 0.1 on the standardized scale.
+
+Moreover, although mobile broadband adoption did positively predict life satisfaction, when evaluated against ROPE on a standardized scale, this association, like all others, was credibly equivalent to zero.
+
+We then examined variation in trends and associations across countries: Variability in sign and magnitude was large, suggesting no consistent connection between internet technology adoption and country-level well-being. Finally, our analysis of differences across demographic groups did not support the idea that young individuals, or young women particularly, were the most at-risk group. Nevertheless, this analysis was necessarily constrained to a limited range of available outcomes reflecting subjective well-being [e.g. @jebbSubjectiveWellBeingWorld2020]. In Study 2, we extended our investigation to mental health outcomes.
 
 # Study 2: Mental health
 
@@ -1247,157 +811,50 @@ We studied meta-analytic prevalence rates (per 100,000 individuals) of anxiety d
 
 The GBD 2019 prevalence rate estimates are based on 19,773 data sources with varying coverage for individual countries; for details of the GBD 2019 methodology, see [@vosGlobalBurden3692020] and especially Appendix 1 therein. The prevalence rates are estimated for females and males in 5-year age groups, and are provided as the IHME meta-regression model's predicted rates and 95% credibility intervals; we converted the latter to approximate standard errors for our meta-analytic modelling strategy (see Study 1, Methods). 
 
+```{r}
+gbd %>% 
+  count(outcome)
+```
+
 We emphasize that the GBD estimates are not observed data, and therefore are accurate only to the extent that the GBD's data collection methods and modelling strategies are valid. We have compared the GBD estimates to the CDC's estimates of self-harm in the United States [@u.s.centersfordiseasecontrolandpreventionWISQARSFatalInjury2022], and found that they are likely to deviate in systematic ways from other authoritative information sources. We nevertheless argue that because the GBD provides the most comprehensive dataset of global mental health, studying these estimates is informative, but emphasize this caveat. The sample size for our analyses (combinations of country, year, sex, and age) was 130,560. 
 
 ### Data analysis
 
-We analysed the data in the same manner as in Study 1, but did not include varying parameters over the age by country interaction because the models did not converge due to invariance in the data. We also set the observed standard errors in the outcomes to zero for models of self-harm due to convergence problems.
-
-```{r gbd-model-diagnostics}
-if (length(list.files("diagnostics/mh")) == 0) {
-  rhats <- fits_mh %>% 
-    mutate(
-      out = map(
-        fit, 
-        ~describe_posterior(
-          .x, 
-          ci_method = "eti", 
-          test = NULL, 
-          effects = "all",
-          parameters = "^cor_|^sd_|^b_"
-        ) %>% 
-          as_tibble() %>% 
-          select(Parameter, Rhat, ESS)
-      )
-    ) %>% 
-    select(-fit) %>% 
-    unnest(out)
-  
-  # Show a table of bad rhats
-  rhats %>%
-    filter(!near(Rhat, 1, tol = .01))
-  
-  # Draw a scatterplot of parameters with 9 worst rhats
-  # Create a tabset of this in HTML output
-  rhats_sum <- rhats %>% 
-    group_by(outcome, model) %>% 
-    arrange(outcome, model, desc(abs(Rhat))) %>% 
-    slice(1:9) %>% 
-    summarise(v = list(str_c(Parameter))) %>% 
-    ungroup() %>% 
-    right_join(fits_mh)
-  
-  dir.create("diagnostics/mh", FALSE, recursive = TRUE)
-  for (i in 1:nrow(rhats_sum)) {
-    x <- slice(rhats_sum, i)
-    path <- str_glue("diagnostics/mh/{x$outcome}-{x$model}.png")
-    png(path, width = 1200, height = 1200, res = 120)
-    pairs(x$fit[[1]]$fit, pars = x$v[[1]])
-    dev.off()
-    
-  }
-}
-```
-
-```{r gbd-model-process}
-# Extract the relevant parameters' summaries from the models
-
-tab_mh <- fits_mh %>% 
-  mutate(
-    out = map(
-      fit,
-      ~describe_posterior(
-        .x, 
-        effects = "all", 
-        centrality = "mean", 
-        ci = 0.95, 
-        ci_method = "ETI", 
-        test = "pd",
-        diagnostic = NULL
-      )
-    )
-  ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  select(-CI)
-tab_mh <- tab_mh %>% 
-  # Clean parameter names
-  separate(
-    Parameter, 
-    into = c("factor", "country", "parameter"), 
-    sep = "\\[|\\]|,"
-  ) %>%
-  mutate(
-    parameter = if_else(
-      Effects == "fixed",
-      str_remove(factor, "^b_"),
-      parameter
-    ),
-    # Clean predictor name
-    Predictor = case_when(
-      parameter == "year" & model == "1" ~ "Time",
-      parameter == "i_cw" ~ "Internet",
-      parameter == "m_cw" ~ "Mobile"
-    ) %>% factor(., levels = c("Time", "Internet", "Mobile"))
-  ) %>% 
-  mutate(
-    cred = pd > .975
-  )
-
-```
+Before analyses, we converted the GBD meta-analytic rates (per 100k population) to percentages, for consistency with Study 1. Otherwise, we analysed the data in the same manner as in Study 1, but did not include varying parameters over the age by country interaction because the models did not converge due to invariance in the data. As above, we report coefficients on the raw scale, with 95%CIs and $p^d$, as well as coefficients scaled by the ratio of the predictor's standard deviation to the standard deviation in the outcome. We test the latter for practically large coefficients with a ROPE of [-0.1, 0.1].
 
 ## Results
 
-```{r tab-gbd-estimates}
-avg_mh <- tab_mh %>% 
-  filter(Effects == "fixed") %>%
-  mutate(
-    Predictor = case_when(
-      factor == "b_year" & model == "1" ~ "Time Within country",
-      factor == "b_i_cw" ~ "Internet Within country",
-      factor == "b_m_cw" ~ "Mobile Within country",
-      factor == "b_i_cb" ~ "Internet Between countries",
-      factor == "b_m_cb" ~ "Mobile Between countries"
-    ) %>% fct_inorder
+```{r tbl-avg-mh}
+#| include: true
+
+tbl_average_mh <- coefficients %>% 
+  filter(
+    level == "average",
+    sex == "average",
+    outcome %in% oo[4:6]
   ) %>% 
-  drop_na(Predictor) %>% 
-  # Models were estimated with percentages, change to rates per 100k
+  left_join(z) %>% 
   mutate(
-    across(Mean:CI_high, ~ . * 1000)
-  ) %>% 
-  # Create a result string for table
-  mutate(
-    Estimate = str_glue(
-      "{number(Mean, .01)} [{number(CI_low, .01)}, {number(CI_high, .01)}]"
+    Raw = str_glue(
+      "{number(mean, .0001)} [{number(q2.5, .0001)},",
+      "{number(q97.5, .0001)}] ({percent2(pd, .1)})"
     ),
-    pd = percent2(pd)
+    Scaled = str_glue(
+      "{number(zmean, .0001)} [{number(zq2.5, .0001)},",
+      "{number(zq97.5, .0001)}] ({percent2(rope, .1)})"
+    )
   ) %>% 
   select(
-    Predictor, 
+    Predictor = predictor, 
     Outcome = outcome, 
-    Estimate,
-    pd
-  ) %>% 
-  arrange(Predictor, Outcome) %>% 
-  separate(Predictor, c("Predictor", "x"), extra = "merge")
-
-avg_mh %>% 
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  )
+tbl_average_mh %>% 
   mutate(
-    Estimate = str_glue("{Estimate} ({pd})"),
-  ) %>% 
-  select(-pd) %>% 
-  pivot_wider(names_from = x, values_from = Estimate) %>% 
-  group_by(Predictor) %>% 
-  mutate(i = 1:n()) %>% 
-  ungroup() %>% 
-  mutate(
-    Predictor = as.character(Predictor),
-    Predictor = if_else(i==1, Predictor, ''),
+    Predictor = if_else(Outcome %in% oo[c(1, 4)], Predictor, ''),
     Outcome = str_replace(Outcome, "_", " ")
   ) %>% 
-  select(-i) %>% 
-  mutate(Outcome = str_replace(Outcome, "Selfharm", "Self-harm")) %>% 
-  replace_na(list(`Between countries` = '')) %>% 
   mutate(
     across(
       3:4, 
@@ -1409,318 +866,237 @@ avg_mh %>%
     )
   ) %>% 
   apa_table(
-    # col.names = c("X", "Y", "Within country", "Between country"),
     caption = "Mental health: Population-level estimates",
     span_text_columns = TRUE,
-    # font_size = "scriptsize",
+    font_size = "small",
     escape = FALSE,
-    note = "Estimates are changes in outcome rates associated with a one unit increase in the predictor (Time: one year; Internet and Mobile: one percent). Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction)."
+    note = "Raw estimates are contrasts in outcome percentages associated with a one year or percentage increase in the predictor. Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction). Standardized estimates refer to contrasts in the z-scored outcome as function of the average year-on-year change in the predictor. The latter percentages indicate posterior probabilities inside a region of practical equivalence to zero ([-0.1, 0.1])."
   )
 ```
 
-Because Study 2 concerned GBD's meta-analytic estimates of mental health rates, we observed much less variation in the variables over time than was the case with the well-being outcomes (Figure \@ref(fig:fig-gbd-data)A). Our results showed that rates of anxiety had increased (`r avg_mh$Estimate[1]`), whereas those of depression (`r avg_mh$Estimate[2]`) and self-harm (`r avg_mh$Estimate[3]`) had decreased, and the model certainty in each of these average trends was high (>99.9%). 
+### Trends
 
-```{r fig-gbd-data}
+Because Study 2 concerned the Global Burden of Disease's meta-analytic estimates of mental health rates, we observed less variation in the variables over time than was the case with the well-being outcomes in Study 1 (Figure \@ref(fig:fig-data-mh)A). Our results showed that rates of anxiety had increased (`r tbl_average_mh[["Raw estimate"]][[1]]`; Table \@ref(tab:tbl-avg-mh), "Raw estimate"), whereas those of depression (`r tbl_average_mh[["Raw estimate"]][[2]]`) and self-harm (`r tbl_average_mh[["Raw estimate"]][[3]]`) had decreased, and the model certainty in the directions of these average trends was high (>99.9%). However, evaluated against a ROPE of [-0.1, 0.1] on the standardized scale, all three trends were credibly equivalent to zero (Table \@ref(tab:tbl-avg-mh), "Standardized estimate"). Thus, similarly to well-being trends, although sign tests suggested credibly non-null changes in mental health over time, when evaluated against the [-0.1, 0.1] ROPE on the standardized scale, there was evidence in support of smaller than meaningfully large associations.
+
+```{r fig-data-mh}
 #| include: true
-#| fig.height: !expr ifelse(knitr::is_latex_output(), 6.6, 5)
-#| fig.cap: "\\textbf{A.} Time courses of GBD's meta-analytic country-specific estimates of rates of anxiety, depression, and self-harm. Lines indicate countries' yearly means of the respective variable, aggregated across sex and age.  \\textbf{B.} Posterior probability distributions of population-level associations (green: between countries, red: within countries) between each of three mental health outcomes and time, per capita internet users, and per capita mobile broadband subscriptions. Estimates are percentage changes in outcomes associated with a one year or percent increase in the predictor. Points and lines indicate posterior means and 95\\%CIs, filled points indicate that zero is not among the 95\\% most credible parameter values."
+#| fig.height: 6
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: \emph{A}. Time courses of three mental health outcomes. Thin dark lines indicate countries' yearly means, aggregated across sex and age. Blue lines and ribbons indicate model-implied regression lines. \emph{B-D}. Estimated conditional means of three mental health metrics on within-country centered per-capita internet users. Primary x- (bottom) and y-axes (left) display raw predictor and outcome values, secondary axes (top, right) display z-scored outcomes and average year-on-year scaled within-country internet adoption. \emph{E-G}. Same as B-D but for mobile broadband adoption.
 
-p1 <- gbd %>% 
-  mutate(outcome = fct_inorder(outcome)) %>%
-  group_by(region, country, year, outcome) %>%
-  summarise(mean = mean(val, na.rm = TRUE)) %>%
-  ungroup() %>% 
-  mutate(year = make_date(year)) %>%
-  mutate(outcome = str_replace(outcome, "Selfharm", "Self-harm")) %>% 
+fig_ce_mh <- wrap_plots(
+  wrap_plots(epred$p[c(11, 14, 17)]),
+  wrap_plots(epred$p[c(12, 15, 18)]),
+  ncol = 1
+) & theme(
+  panel.grid.major = element_line(linewidth = .1, color = "grey50")
+)
+
+p1 <- p1_data %>% 
+  filter(outcome %in% oo[4:6]) %>% 
   ggplot(aes(year, mean)) +
   scale_y_continuous(
-    "Rate per 100k individuals",
-    # From percentages in model to rates per 100k
-    labels = ~ number(. * 1000, big.mark = ","),
-    breaks = pretty_breaks(5),
-    expand = expansion(.05)
+    "Value (%)",
+    # Display percentages
+    breaks = pretty_breaks(),
+    expand = expansion(.01)
   ) +
-  scale_x_date(
+  scale_x_continuous(
     "Year",
-    breaks = make_date(c(2000, 2005, 2010, 2015, 2020)),
-    date_labels = "'%y",
+    breaks = c(2000, 2005, 2010, 2015, 2020),
+    labels = c("'00", "'05", "'10", "'15", "'20"),
     expand = expansion(.02)
+  ) +
+  # coord_cartesian(ylim = c(0, 100)) +
+  geom_lineribbon(
+    data = p1_data_model %>% filter(outcome %in% oo[4:6]),
+    aes(y = estimate__, ymin = lower__, ymax = upper__, x = year + 2010),
+    col = "dodgerblue3",
+    fill = alpha("dodgerblue1", .25),
+    linewidth = 0.6
   ) +
   geom_line(
     aes(
       group = interaction(country, outcome)
     ),
-    size = .05, col = "dodgerblue3"
+    linewidth = .025, alpha = .2
   ) +
-  facet_grid(
-    outcome ~ region,
-    scales = "free_y",
+  facet_wrap(
+    "outcome",
+    scales = "free",
+    nrow = 1,
     labeller = as_labeller(function(x) str_replace(x, "_", "\n"))
   ) +
   theme(
     legend.position = "none"
   )
-
-x <- fits_mh %>% 
-  mutate(out = map(fit, ~spread_draws(.x, `^b_.*`, regex = TRUE))) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  select(outcome, model, .draw, b_year, matches("^b_[i|m]_c[w|b]$")) %>% 
-  pivot_longer(starts_with("b_"), names_to = "parameter") %>% 
-  mutate(
-    Predictor = case_when(
-      parameter == "b_year" & model == "1" ~ "Time Within country",
-      parameter == "b_i_cw" ~ "Internet Within country",
-      parameter == "b_m_cw" ~ "Mobile Within country",
-      parameter == "b_i_cb" ~ "Internet Between countries",
-      parameter == "b_m_cb" ~ "Mobile Between countries"
-    )
-  ) %>% 
-  drop_na(Predictor, value) %>% 
-  separate(Predictor, c("Predictor", "x"), extra = "merge") %>% 
-  mutate(
-    Predictor = factor(
-      Predictor, 
-      levels = c("Time", "Internet", "Mobile")
-    )
-  )
-p2 <- x %>%   
-  ggplot(aes(value, fct_rev(Predictor), fill = x)) +
-  scale_color_brewer(
-    "Association", palette = "Set2", aesthetics = c("fill", "color")
-  ) +
-  scale_shape_manual(values = c(21, 19)) +
-  scale_x_continuous(
-    "Estimated linear association",
-    breaks = extended_breaks(),
-    # From percentages in model to rates per 100k
-    labels = ~ . * 1000,
-  ) +
-  stat_halfeye(
-    aes(shape = after_stat(sign(xmax) == sign(xmin))),
-    position = position_dodge(.15), 
-    normalize = "xy", 
-    height = .8,
-    point_interval = "mean_qi",
-    fatten_point = 3,
-    point_fill = "white",
-    size = .25,
-    slab_alpha = .75,
-    adjust = 1.5,
-    .width = .95
-    ) +
-  facet_wrap(
-    "outcome", 
-    labeller = labeller(
-      .cols = as_labeller(~str_replace(., "_", " "))
-    ),
-    scales = "free_x"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.title.y = element_blank(),
-    panel.grid.major.x = element_line(
-      color = "black", linetype = "dotted", size = .1
-    )
-  )
-
-(p1 / p2) + 
-  plot_layout(heights = c(7, 3)) +
+(p1 / fig_ce_mh) +
+  plot_layout(heights = c(22, 78)) +
   plot_annotation(tag_levels = "A")
 ```
 
-Then, to answer our primary research question, we examined the within-country predictive associations between internet technology adoption and mental health. We observed no credible (at the 95% level) associations between internet adoption and either anxiety, depression, or self-harm (Figure \@ref(fig:fig-gbd-data)B). Similarly, per capita mobile broadband subscriptions were not credible predictors of mental health for the average country, although the model indicated `r avg_mh$pd[10]` certainty of a negative association between mobile broadband adoption and rates of anxiety.
+### Average associations
 
-```{r}
-tmpr <- fits_mh %>% 
-  filter(model > 1) %>% 
+Then, to answer our primary research question, we examined the within-country associations between internet technology adoption and mental health. We observed no credible (at the 95% level) associations between internet adoption and either anxiety, depression, or self-harm (Figure \@ref(fig:fig-data-mh)B), evaluated either against a point null on the raw scale (anxiety: `r tbl_average_mh[["Raw estimate"]][[4]]`; depression: `r tbl_average_mh[["Raw estimate"]][[5]]`; self-harm: `r tbl_average_mh[["Raw estimate"]][[6]]`), or against a ROPE of [-0.1, 0.1] on the standardized scale (Table \@ref(tab:tbl-avg-mh), "Standardized estimate")). Similarly, per capita mobile broadband subscriptions were not credible predictors of either anxiety, depression, or self-harm (Table \@ref(tab:tbl-avg-mh)). These results suggested that, all else being equal, country-level (mobile) internet adoption does not predict mental health.
+
+We also examined the between-country associations linking internet technology adoption with mental health. Countries with greater levels of per capita internet users, on average, tended to be those with lower levels of depression, and higher levels of self-harm (Figure \@ref(fig:fig-data-mh)B, Between country estimates). Similarly, per capita mobile broadband subscriptions predicted lower rates of both anxiety and depression, but higher rates of self-harm. However, all of these between-country associations were within the region of practical equivalence to zero with very high confidence (>99.9%).
+
+### Countries
+
+```{r tbl-country-prop-mh}
+tbl_props_mh <- tbl_props %>% 
+  filter(Outcome %in% oo[4:6]) %>% 
   mutate(
-    sdx = map_dbl(fit, ~sd(.x$data[,4])),
-    sdy = map_dbl(fit, ~sd(.x$data[,1]))
-  ) %>% 
-  mutate(
-    x = map(
-      fit, 
-      ~as_draws_df(.x, variable = "b_[i|m]_cw$", regex = TRUE) %>% 
-        rename(b = 1) %>% 
-        mutate(r = b * (sd(.x$data[,4]) / sd(.x$data[,1])), .keep = "unused") %>% 
-        describe_posterior(
-          centrality = "mean", 
-          ci = 0.95, 
-          ci_method = "ETI", 
-          test = "pd",
-          diagnostic = NULL
-        ) %>% 
-        as_tibble())
-  ) %>% 
-  mutate(model = factor(model, labels = c("Internet", "Mobile"))) %>% 
-  unnest(x) %>% 
-  mutate(
-    result = str_glue(
-      "{number(Mean, .001)} [{number(CI_low, .001)}, {number(CI_high, .001)}]"
-    ),
-    .keep = "unused"
-  ) %>% 
-  select(outcome, model, result)
-tmpr
-```
-
-Although numerically greater than the unstandardized coefficients reported above, the standardized associations were small according to common guidelines: (anxiety & internet = `r tmpr$result[1]`, anxiety & mobile = `r tmpr$result[2]`, depression & internet = `r tmpr$result[3]`, depression & mobile = `r tmpr$result[4]`, depression & internet = `r tmpr$result[5]`, depression & mobile = `r tmpr$result[6]`).
-
-We also examined the between-country associations linking internet technology adoption with mental health. Countries with greater levels of per capita internet users, on average, tended to be those with lower levels of depression, and higher levels of self-harm (Figure \@ref(fig:fig-gbd-data)B, Between country estimates). Similarly, per capita mobile broadband subscriptions predicted lower rates of both anxiety and depression, but higher rates of self-harm.
-
-We then examined the heterogeneity in the associations between countries. Although there were considerable differences in changes in anxiety, depression, and self-harm between countries, the associations varied less (Figure \@ref(fig:fig-gbd-parameters)A). We found that internet adoption was positively (negatively) associated with anxiety for three (seven) countries, with depression for one (zero) countries, and self-harm for seven (ten) countries (Table \@ref(tab:tab-gbd-props)). We include all countries' estimates in the online materials.
-
-```{r fig-gbd-country}
-#| cache: false
-p_country_mh <- figure_country(
-  tab_mh %>% 
-    mutate(outcome = str_replace(outcome, "Selfharm", "Self-harm"))
-) +
-  scale_x_continuous(
-    "Estimated linear association",
-    # From percentages in model to rates per 100k
-    labels = ~ . * 1000,
-    breaks = extended_breaks(6), 
-    expand = expansion(c(0.01))
+    Outcome = fct_inorder(str_replace(Outcome, "_", " "))
+  )
+tbl_props_mh %>% 
+  as.data.frame() %>% 
+  setNames(str_remove(names(.), "_ROPE") %>% str_remove("_Sign")) %>% 
+  apa_table(
+    placement = "htb",
+    span_text_columns = TRUE,
+    col_spanners = list(` ` = c(1, 2), `Sign test` = c(3, 5), `ROPE` = c(6, 9)),
+    font_size = "small",
+    caption = "Mental health: Country-specific test summary",
+    note = "Numbers indicate counts and (percentages) of countries with different decisions either based on a sign test or a ROPE of [-0.1, 0.1] on the standardized scale."
   )
 ```
 
-```{r gbd-demographics}
-mh_demo <- fits_mh %>% 
-  mutate(
-    x = factor(model, levels = 1:3, labels = c("year", "i_cw", "m_cw")),
+We then examined the heterogeneity in the associations between countries. Although there were considerable differences in changes in anxiety, depression, and self-harm between countries, the associations varied less (Figure \@ref(fig:fig-country-mh)). To summarize these country-level trends and associations, we calculated proportions of countries with negative, positive, null, and indecisive results based on both sign tests and ROPE tests, as in Study 1 (Table \@ref(tab:tbl-country-prop-mh)). First, we find that the vast majority of country-specific trends and associations were indecisive when evaluated against a point null hypothesis (Table \@ref(tab:tbl-country-prop-mh)). Moreover, when evaluated against a ROPE of [-0.1, 0.1] all country-level coefficients were credibly equivalent to zero.
+
+Thus, analyses of country-specific associations provided stronger evidence that (mobile) internet penetration does not meaningfully predict fluctuations in countries' mental health.
+
+```{r tbl-cb-mh}
+coefficients %>% 
+  filter(
+    outcome %in% oo[4:6],
+    level == "cb",
+    predictor != "Year"
   ) %>% 
   mutate(
-    out = map2(
-      fit, x, 
-      ~bind_rows(
-        world = hypothesis(
-          .x, 
-          str_glue("{.y} + {.y}:sex1 * {c(-1, 1)} = 0")
-        )$hypothesis,
-        age = hypothesis(
-          .x, 
-          str_glue("{.y} + {.y}:sex1 * {c(-1, 1)} = 0"),
-          scope = "coef", group = "age"
-        )$hypothesis
+    predictor = if_else(outcome %in% oo[c(1, 4)], predictor, ''),
+    outcome = str_replace(outcome, "_", " ")
+  ) %>% 
+  select(
+    Predictor = predictor, 
+    Outcome = outcome, 
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  ) %>% 
+  # Justify considering negative estimates
+  mutate(
+    across(
+      3:4, 
+      ~if_else(
+        str_starts(., "-"), 
+        ., 
+        paste0("\\phantom{-}", .)
       )
     )
   ) %>% 
-  select(-fit) %>% 
-  unnest(out) %>% 
-  mutate(Sex = if_else(str_detect(Hypothesis, "-1"), "Male", "Female")) %>% 
-  mutate(Group = if_else(is.na(Group), Sex, Group)) %>% 
-  mutate(
-    predictor = factor(
-      model, 
-      levels = 1:3, 
-      labels = c("Time", "Internet", "Mobile")
-    )
-  ) %>% 
-  mutate(cred = sign(CI.Lower) == sign(CI.Upper)) %>% 
-  mutate(
-    Group = factor(Group, levels = c("Female", "Male", levels(dat$age)))
-  ) %>% 
-  mutate(outcome = str_replace(outcome, "Selfharm", "Self-harm"))
-```
-
-```{r fig-gbd-parameters}
-#| include: true
-#| #| cache: false
-#| fig.height: !expr ifelse(knitr::is_latex_output(), 8.5, 6.8)
-#| fig.env: "figure*"
-#| fig.cap: "\\textbf{A.} Country-specific yearly changes in three mental health outcomes (Time), and their associations with per capita internet users (Internet) and mobile broadband subscriptions (Mobile). Points and lines indicate individual countries' posterior means and 95\\% CIs. Countries are sorted from the most negative to most positive estimate. Filled points indicate that the parameter's 95\\% credibility interval excludes zero (in both panels). We include a table of all countries' estimates in the online materials. \\textbf{B.} Age- and sex-specific (green: female, red: male) changes in three mental health outcomes (top row), and their associations with per capita internet users (middle row) and mobile broadband subscriptions (bottom row)."
-p_demo_mh <- figure_demographics(mh_demo) +
-  # Adjust x-axes
-  scale_x_continuous(
-    "Estimated linear association",
-    breaks = extended_breaks(5),
-    expand = expansion(.1),
-    labels = ~. * 1000
-  )
-
-((p_country_mh /
-  p_demo_mh + theme(axis.text.y = element_text(size = rel(0.6)))) &
-  theme(text = element_text(size = 8))) +
-  plot_layout(heights = c(5.5, 4.5)) +
-  plot_annotation(tag_levels = "A")
-```
-
-```{r tab-gbd-props}
-mh_props <- tab_mh %>% 
-  filter(factor == "r_country") %>% 
-  drop_na(Predictor) %>% 
-  mutate(
-    Outcome = str_replace(outcome, "_", " "),
-    # Predictor = as.character(Predictor),
-    # Predictor = if_else(Outcome == "Life satisfaction", Predictor, "")
-  ) %>% 
-  mutate(outcome = str_replace(Outcome, "Selfharm", "Self-harm"))
-mh_props2 <- mh_props %>% 
-  mutate(
-    x = case_when(
-      cred & sign(Mean)==-1 ~ "Negative",
-      cred & sign(Mean)==1 ~ "Positive",
-      TRUE ~ "Null"
-    )
-  ) %>% 
-  count(Outcome, Predictor, x) %>% 
-  arrange(Predictor, Outcome) %>% 
-  group_by(Outcome, Predictor) %>% 
-  mutate(n = str_glue("{n} ({percent(n/sum(n), 1)})")) %>%  
-  pivot_wider(names_from = x, values_from = n) %>% 
-  mutate(across(c(Negative, Null, Positive), ~replace_na(., "0%"))) %>% 
-  select(Predictor, Outcome, Negative, Null, Positive)
-mh_props2 %>%   
-  group_by(Predictor) %>% 
-  mutate(i = 1:n()) %>% 
-  ungroup() %>% 
-  mutate(
-    Predictor = as.character(Predictor),
-    Predictor = if_else(i==1, Predictor, '')
-  ) %>% 
-  select(-i) %>% 
   apa_table(
+    caption = "Mental health: Between-country associations",
+    span_text_columns = TRUE,
+    font_size = "small",
+    escape = FALSE,
     placement = "htb",
-    span_text_columns = FALSE,
-    caption = "Mental health: Country-specific test summary",
-    note = "Numbers indicate counts and (percentages) of countries with different sign test results. Percentages may not add up to 100% because of rounding."
+    note = "Raw estimates are contrasts in outcome percentages associated with a one percentage increase in the predictor. Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction). Standardized estimates refer to contrasts in the z-scored outcome as function of the average year-on-year change in the predictor. The latter percentages indicate posterior probabilities inside a region of practical equivalence to zero ([-0.1, 0.1])."
   )
 ```
 
-```{r}
-tmp <- tab_mh %>% 
-  filter(
-    Effects == "fixed", 
-    str_detect(parameter, ":sex1"), 
-    !(parameter=="year:sex1" & model != 1)
-  ) %>% 
-  mutate(
-    x = str_glue("{percent(Mean, .01)} [{number(CI_low, .01)}, {number(CI_high, .01)}]"), 
-    .keep = "unused"
-  ) %>% 
-  select(outcome, parameter, x, pd)
-tmp
+```{r fig-country-mh}
+#| cache: true
+#| include: true
+#| fig.height: 6.4
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: "Country-specific yearly changes in three mental health outcomes (top row), and their associations with per capita internet users (second row) and mobile broadband subscriptions (third row). Points and lines indicate individual countries' posterior means and 95\\% CIs. Countries are sorted from the most negative to most positive estimate. Filled points indicate that the parameter's 95\\% credibility interval excludes zero (in both panels). Raw associations (bottom x-axes) indicate changes in the outcome percentage as function of percentage (or one year) change in the predictor. Scaled associations (top x-axes) indicate changes in standardized outcome as function of the average year-on-year change in the predictor. "
+
+tmp <- distinct(coefficients, outcome, predictor) %>% 
+  distinct(outcome, predictor) %>% 
+  filter(outcome %in% oo[4:6]) %>% 
+  arrange(predictor, outcome) %>% 
+  mutate(p = map2(outcome, predictor, ~figure_country(.x, .y))) %>% 
+  pull(p)
+wrap_plots(tmp)
 ```
 
-We then turned to our third research question, and studied how the associations linking internet technology adoption and mental health varied across demographic groups. Changes in the rates of anxiety showed a complex pattern, whereby older males rates of anxiety increased more than younger males, except the very youngest age group (Figure \@ref(fig:fig-gbd-parameters)B). For females, on the other hand, rates of anxiety increased least for the oldest and youngest groups. Overall, the difference in changes in anxiety between males and females was not credibly different from zero. Depression had decreased more for females than males (`r tmp$x[4]`), and for the middle age groups vs. the youngest and oldest groups. Self-harm had decreased slightly more for females, but the difference was not credibly different from zero, and for older groups vs. younger.
+### Demographics
 
-Overall, the demography-based differences in the mental health-internet adoption associations were smaller than within the mental health trends (Figure \@ref(fig:fig-gbd-parameters)B). There were no sex differences in associations linking either per capita internet users or mobile broadband subscriptions to either mental health outcome that were credibly different from zero. Age-based differences in links with anxiety were small. However, depression was negatively and credibly associated with internet adoption for older age groups, but positively and credibly associated with per capita mobile broadband subscriptions for both sexes in the 10 to 14 and 15 to 19 year-old age brackets. Similarly, per capita internet users predicted self-harm negatively for older age groups in the 65 to 89 year-old brackets, but positively in the 10 to 34 year-old brackets. These results indicated some support for the idea that younger individuals' mental health may be more negatively associated with the adoption of internet technologies, although this finding was not consistent across the two different predictors or three different mental health outcomes.
+```{r fig-demographics-mh}
+#| cache: true
+#| include: true
+#| fig.height: 6.6
+#| fig.width: 8
+#| fig.env: "figure*"
+#| fig.cap: "Age- and sex-specific (green: female, red: male) changes in three mental health outcomes (top row), and their associations with per capita internet users (middle row) and mobile broadband subscriptions (bottom row). Bottom x-axes indicate raw associations; top x-axes are scaled associations."
+
+tmp <- coefficients %>% 
+  distinct(predictor, outcome) %>% 
+  filter(outcome %in% oo[4:6]) %>% 
+  arrange(predictor, outcome) %>% 
+  mutate(p = map2(predictor, outcome, ~figure_demo(.x, .y))) %>% 
+  pull(p)
+wrap_plots(tmp) &
+  ylab("Demographic group")
+```
+
+We then turned to our third research question, and studied how trends in mental health, or its associations with internet technology adoption varied across demographic groups. Changes in rates of anxiety showed a complex pattern, whereby older males' rates of anxiety increased more than younger males', except the very youngest age group (Figure \@ref(fig:fig-demographics-mh)). For females, on the other hand, rates of anxiety increased least for the oldest and youngest groups. Overall, the difference in changes in anxiety between males and females was credibly null (Table \@ref(tab:tbl-sex1-mh)). Depression had decreased more for females than males (Table \@ref(tab:tbl-sex1-mh)), and for the middle age groups vs. the youngest and oldest groups. There were no average sex differences in rates of decline of self-harm (Table \@ref(tab:tbl-sex1-mh)), but the declines were greater for older than younger age groups (Figure \@ref(fig:fig-demographics-mh)).
+
+Overall, the demography-based differences in the mental health-internet adoption associations were smaller than within the mental health trends (Figure \@ref(fig:fig-demographics-mh)). There were no sex differences in associations linking either per capita internet users or mobile broadband subscriptions to either mental health outcome that were credibly different from zero. Tested against a ROPE of [-0.1, 0.1], all sex differences were credibly null. Age-based differences in links with anxiety were small. However, depression was negatively and credibly associated with internet adoption for older age groups, but positively and credibly associated with per capita mobile broadband subscriptions for both sexes in the 10 to 14 and 15 to 19 year-old age brackets, based on sign tests. The magnitudes of these associations were very small, and supported null associations on the standardized scale. Similarly, per capita internet users predicted self-harm negatively for older age groups in the 65 to 89 year-old brackets, but positively in the 10 to 34 year-old brackets. These results indicated some support for the idea that younger individuals' mental health may be more negatively associated with the adoption of internet technologies, although this finding was not consistent across the two different predictors or three different mental health outcomes, and in fact null when considered in the context of a ROPE of [-0.1, 0.1] on the standardized scale.
+
+```{r tbl-sex1-mh}
+coefficients %>% 
+  filter(
+    level == "average",
+    sex == "female-male",
+    outcome %in% oo[4:6]
+  ) %>% 
+  mutate(
+    predictor = if_else(outcome %in% oo[c(1, 4)], predictor, ''),
+    outcome = str_replace(outcome, "_", " ")
+  ) %>% 
+  select(
+    Predictor = predictor, 
+    Outcome = outcome, 
+    `Raw estimate` = Raw, 
+    `Standardized estimate` = Scaled
+  ) %>% 
+  # Justify considering negative estimates
+  mutate(
+    across(
+      3:4, 
+      ~if_else(
+        str_starts(., "-"), 
+        ., 
+        paste0("\\phantom{-}", .)
+      )
+    )
+  ) %>% 
+  apa_table(
+    caption = "Mental health: Predictor-sex interactions",
+    span_text_columns = TRUE,
+    placement = "htb",
+    font_size = "small",
+    escape = FALSE,
+    note = "Parameter estimates indicate differences between males and females."
+  )
+```
 
 ## Discussion
 
-In Study 2, we replicated the analyses regarding well-being in Study 1 using three mental health outcomes from a different dataset. We found mixed results regarding changes in the rates of mental health problems, whereby rates of anxiety had increased, but rates of depression and self-harm decreased, for the average country. Importantly, demography-based differences emerged: Younger age groups' rates of depression and self-harm were more positively predicted by both per capita internet users and mobile broadband subscriptions.
+In Study 2, we replicated the analyses regarding well-being in Study 1 using three mental health outcomes from a different dataset. We found mixed results regarding changes in the rates of mental health problems, whereby rates of anxiety had increased, but rates of depression and self-harm decreased, for the average country and when tested against a point null hypothesis. However, when tested against a ROPE of [-0.1, 0.1] on a standardized scales, all associations were credibly equivalent to that null interval. Similar to the average contrasts, country-, age-, and sex-specific coefficients were all credibly equivalent to zero. With the important caveat that the Global Burden of Disease mental health rates analysed here are noisy meta-analytic estimates, our results suggested only small if any average changes in mental health globally, and moreover no associations between mental health and internet technology adoption.
 
 # General discussion
 
-The idea that the rapid and global penetration of the internet, and technologies enabled by it, is affecting psychological well-being and mental health is compelling but not adequately tested. In two studies, we focused on the degree to which well-being and mental health had changed in the past two decades across most world countries, and found mixed results: Both negative and positive experiences had increased, as had meta-analytic rates of anxiety. Depression and self-harm, conversely, had decreased. These results align with other results that tend to be mixed or find few changes over time [@borAreChildAdolescent2014; @collishawAnnualResearchReview2015; @cosmaCrossNationalTimeTrends2020; @keyesRecentIncreasesDepressive2019]. In addition, although previous reports have suggested increasing mental health problems specific to young females [e.g. @borAreChildAdolescent2014], we did not find support for such changes for the average country.
+The idea that the rapid and global penetration of the internet, and technologies enabled by it, is affecting psychological well-being and mental health is compelling but not adequately tested. In two studies, we focused on the degree to which well-being and mental health had changed in the past two decades across most world countries. Based on sign tests, we found mostly mixed and inconclusive results; based on ROPE tests and a smallest coefficient size of interest of 0.1, we found evidence against meaningfully large changes in well-being and mental health. These results align with other results that tend to be mixed or find few changes over time [@borAreChildAdolescent2014; @collishawAnnualResearchReview2015; @cosmaCrossNationalTimeTrends2020; @keyesRecentIncreasesDepressive2019]. In addition, although previous reports have suggested increasing mental health problems specific to young females [e.g. @borAreChildAdolescent2014], we did not find support for such changes for the average country.
 
-We then measured the extent to which countries' per capita internet users and mobile broadband subscriptions predicted those countries' levels of well-being and mental health. We found that, overall, there were few if any meaningfully large average associations. In all cases but one---mobile broadband adoption predicted life satisfaction positively---these associations were not credibly different from zero (Figure \@ref(fig:fig-gwp-data)B). The small observed associations were also qualified by substantive variability across countries (Figure \@ref(fig:fig-gwp-parameters)A) and demographics (Figure \@ref(fig:fig-gwp-parameters)B). Furthermore, countries where internet technologies were more widely adopted overall were not those with lowest levels of well-being and mental health. 
+We then measured the extent to which per capita internet users and mobile broadband subscriptions predicted levels of well-being and mental health (within countries). Although confidence for direction of these coefficients exceeded 95% in one case out of twelve, on a standardized scale all 12 associations were practically equivalent to zero with very high confidence. The small associations were also qualified by variability across countries and demographics. Furthermore, countries where internet technologies were more widely adopted overall were not those with lowest levels of well-being and mental health. 
 
-Finally, we found large age-based differences in associations linking internet technology adoption and mental health outcomes. Both depression and self-harm were more positively associated with per capita internet users and mobile broadband subscriptions in the younger age brackets---including the youngest studied here at 10 to 14 years---than they were for older age groups. Studies on the association between internet technology use and mental health across wide age ranges are scarce. Nevertheless, while we found few gender differences, our results are in line with one study reporting that cross-sectional associations between social media use and life satisfaction are more negative at specific time windows in adolescence [@orbenWindowsDevelopmentalSensitivity2022].
+We also examined the moderating roles of sex and age: Both depression and self-harm were more positively associated with per capita internet users and mobile broadband subscriptions in the younger age brackets---including the youngest studied here at 10 to 14 years---than they were for older age groups. However, evaluated against a smallest association of interest, all sex- and age-based associations provided evidence for null associations. Studies on the association between internet technology use and mental health across wide age ranges are scarce. Nevertheless, while we found few gender differences, our results are in line with one study reporting that cross-sectional associations between social media use and life satisfaction are more negative at specific time windows in adolescence [@orbenWindowsDevelopmentalSensitivity2022].
 
-Our results do not provide evidence supporting the view that the internet, and technologies enabled by it such as smartphones with internet access, are actively promoting or harming either well-being or mental health globally. Our results also suggest that age- and sex-based differences in associations linking internet technology adoption and well-being are small. However, we did find evidence suggesting that internet technology adoption is more negatively associated with young individuals' mental health than older groups' (whose associations were, in some cases, positive). Nevertheless, these associations, although sometimes credibly different from zero, appeared small in magnitude. Because of their apparently small magnitude and the fact that the data are not at the individual level, we highlight that these contrasts do not speak to whether the associations might be clinically relevant.
+Our results do not provide evidence supporting the view that the internet, and technologies enabled by it such as smartphones with internet access, are actively promoting or harming either well-being or mental health globally. Our results also suggest that age- and sex-based differences in associations linking internet technology adoption and well-being are small. However, we did find some evidence suggesting that internet technology adoption is more negatively associated with young individuals' mental health than older groups' (whose associations were, in some cases, positive). Nevertheless, these associations, although sometimes credibly different from zero, appeared small in magnitude and were credibly in the null region when evaluated against a SESOI of 0.1 on the standardized scale. Because of their apparently small magnitude and the fact that the data are not at the individual level, we highlight that these contrasts do not speak to whether the associations might be clinically relevant.
 
 It is important to note that the data and theory required to address this question at the causal level are absent. Consequently, our analyses cannot account for potential confounders in the associations linking mental health and well-being to internet technology adoption. Our descriptions, therefore, are suggestive but are not intended to provide evidence for, or against, causal relations. Although the first to study this topic within a global perspective, future studies should investigate other potential differences based on demographic, economic, and cultural factors, which we could not address here. In addition, our results regarding mental health, while comprehensive, are necessarily and considerably less certain than those on well-being, due to the lack of diverse global data and our own reliance on GBD estimates in place of objective measurements of mental health. In addition, the data aggregation necessary to link internet adoption and well-being at the national level preclude investigating other important and relevant questions, such as comorbidities.
 
@@ -1728,7 +1104,7 @@ Research on the effects of internet technologies is stalled because the data mos
 
 # Material availability and ethics
 
-All the data-analytic code and a synthetic GWP dataset to facilitate the verification, extension, and critique of our procedures are available at <https://doi.org/10.5281/zenodo.7004053>. The ITU data, along with a complete list of years, countries, and sources of data are freely available at <https://www.itu.int/en/ITU-D/Statistics/Pages/stat/default.aspx>. The GWP data are available to subscribing institutions through Gallup. The GBD data are freely available at <http://ghdx.healthdata.org/gbd-results-tool>.
+All the data-analytic code and a synthetic GWP dataset to facilitate verification, extension, and critique of our procedures are available at <https://doi.org/10.5281/zenodo.7004053>. The ITU data, along with a complete list of years, countries, and sources of data are freely available at <https://www.itu.int/en/ITU-D/Statistics/Pages/stat/default.aspx>. The GWP data are available to subscribing institutions through Gallup. The GBD data are freely available at <http://ghdx.healthdata.org/gbd-results-tool>.
 
 This study and methods therein were approved by the University of Oxford Central University Research Ethics Committee (SSH_OII_CIA_21_084).
 
@@ -1748,10 +1124,7 @@ We thank Niklas Johannes for feedback on this work. The authors would like to ac
 
 This research was supported by the Huo Family Foundation and Economic and Social Research Council Grant ES/T008709/1. 
 
-
-
 # References
-
 
 ::: {#refs}
 :::
@@ -1759,80 +1132,41 @@ This research was supported by the Huo Family Foundation and Economic and Social
 \clearpage
 \onecolumn
 
-\begin{center}
-\textbf{Supplementary online material to \emph{Global well-being and mental health in the internet age} (Vuorre \& Przybylski)}
-\end{center}
-
-<!-- Prepend table & figure numbers with S and reset counters -->
+<!-- Prepend table & figure numbers with A and reset counters -->
 \setcounter{page}{1}
 \setcounter{table}{0}
 \setcounter{figure}{0}
-\renewcommand{\thetable}{SOM\arabic{table}}
-\renewcommand{\thefigure}{SOM\arabic{figure}}
+\renewcommand{\thetable}{A\arabic{table}}
+\renewcommand{\thefigure}{A\arabic{figure}}
 
-## Well-being: Country-specific parameters
+\clearpage
+# Appendix 1
 
-```{r, tab-gwp-props}
-#| include: !expr knitr::is_latex_output()
+```{r tbl-cb-wb}
+#| include: true
 ```
 
 
-```{r}
-#| include: !expr knitr::is_latex_output()
-table_of_countries <- function(data, x) {
-  
-  # Display MH as rates per 100k individuals
-  m <- if_else(x == "Mental health", 1000, 1)
-  
-  data %>% 
-    filter(factor == "r_country") %>% 
-    drop_na(Predictor) %>% 
-    mutate(
-      across(Mean:CI_high, ~. * m),
-      Estimate = str_glue(
-        "{number(Mean, .01)} [{number(CI_low, .01)}, {number(CI_high, .01)}] ({percent2(pd)})"
-      ),
-      outcome = str_replace(outcome, "_", " ")
-    ) %>% 
-    select(
-      Outcome = outcome,
-      Predictor, 
-      Country = country,
-      Estimate
-    ) %>% 
-    pivot_wider(names_from = Outcome, values_from = Estimate) %>% 
-    mutate(
-      across(
-        2:5, 
-        ~if_else(
-          str_starts(., "-"), 
-          ., 
-          paste0("\\phantom{-}", .)
-        )
-      ),
-      across(2:5, ~ifelse(is.na(.), "", .))
-    ) %>% 
-    arrange(Predictor, Country) %>% 
-    mutate(Country = str_replace_all(Country, "\\.(?!\\.)", " ")) %>% 
-    apa_table(
-      longtable = TRUE, 
-      escape = FALSE,
-      font_size = "scriptsize",
-      caption = str_glue("{x}: Country-specific estimates"),
-      note = "Estimates are changes in the outcome associated with a one unit increase in the predictor (Time: one year; Internet and Mobile: one percent). Numbers indicate posterior means, [95\\%CIs], and (posterior probabilities of direction)."
-    )
-}
-table_of_countries(tab_wb, "Well-being" )
+```{r tbl-country-prop-wb}
+#| include: true
 ```
 
-## Mental health: Country-specific parameters
 
-```{r, tab-gbd-props}
-#| include: !expr knitr::is_latex_output()
+```{r tbl-sex1-wb}
+#| include: true
 ```
 
-```{r}
-#| include: !expr knitr::is_latex_output()
-table_of_countries(tab_mh, "Mental health" )
+\clearpage
+
+```{r tbl-cb-mh}
+#| include: true
 ```
 
+```{r tbl-country-prop-mh}
+#| include: true
+```
+
+
+```{r tbl-sex1-mh}
+#| include: true
+```

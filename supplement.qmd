@@ -1,0 +1,1019 @@
+---
+title: Global well-being and mental health in the internet age
+subtitle: Online analysis supplement
+author:
+  - name: Matti Vuorre
+    orcid: 0000-0001-5052-066X
+    email: mjvuorre@uvt.nl
+    url: https://vuorre.netlify.app
+    affiliation:
+      - name: Tilburg University
+        url: https://www.tilburguniversity.edu/staff/m-j-vuorre
+  - name: Andrew K. Przybylski
+    orcid: 0000-0001-5547-2185
+    affiliation:
+      - name: University of Oxford
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-title: Contents
+    theme: materia
+    mainfont: LibertinusSansRegular
+    monofont: FiraCodeRegular
+    code-fold: true
+    # code-link: true # Slow
+    code-tools: true
+    header-includes: |
+      <link rel="stylesheet" media="screen" href="https://fontlibrary.org//face/fira-code" type="text/css"/>
+      <link rel="stylesheet" media="screen" href="https://fontlibrary.org//face/libertinus-sans" type="text/css"/> 
+bibliography: references.bib
+---
+
+This repository contains the code and synthetic datasets required to reproduce all analyses reported in *Global well-being and mental health in the internet age* (Vuorre & Przybylski). 
+
+# Preface
+
+## Materials {.unnumbered .unlisted}
+
+- [Preprint](https://doi.org/10.31234/osf.io/9tbjy)  
+  - A publicly available version of our manuscript in advance of peer-review and formal publication
+- [GitHub repository](https://github.com/digital-wellbeing/global-wbmh)  
+  - A version controlled repository containing all the raw data and code in this project
+- [Zenodo](https://doi.org/10.5281/zenodo.7004054)
+  - An archived permanent copy of the GitHub repository
+
+## Reproducibility {.unnumbered .unlisted}
+
+The analyses were conducted in R; steps to reproduce are
+
+1. Clone the [github repo](https://github.com/digital-wellbeing/global-wbmh)
+  - Terminal: `git clone https://github.com/digital-wellbeing/global-wbmh.git`  
+    OR
+  - RStudio: File -> New Project -> Version Control -> Git -> use the URL from above
+
+2. Run the analyses and render manuscript
+  - Terminal: `make`
+
+The project repo includes the GBD dataset, code to download the ITU dataset, and a synthetic mock version of the GWP dataset to enable reproducing all our computations. **The models take several hours/days each to run**---depending on your local computing resources---and therefore the rendering process can take several days. For this reason, `make` will fail after having cleaned the data. Then, run `models.R` with settings specific to your environment/cluster. Once that is done you can `make` again and it should work.
+
+If you encounter problems, please [open an issue](https://github.com/digital-wellbeing/global-wbmh/issues).
+
+# Data cleaning
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(
+  cache = TRUE,
+  include = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = TRUE,
+  dpi = 300,
+  fig.align = "center"
+)
+```
+
+```{r packages}
+#| cache: false
+library(haven)
+library(labelled)
+library(janitor)
+library(readxl)
+library(countrycode)
+library(tidybayes)
+library(ggdist)
+library(brms)
+library(scales)
+library(gt)
+library(latex2exp)
+library(distributional)
+library(patchwork)
+library(knitr)
+library(posterior)
+library(bayestestR)
+library(tidyverse)
+
+# Create directories for intermediate files
+dir.create("data", FALSE)
+dir.create("cache", FALSE)
+
+theme_set(
+  theme_linedraw(
+    base_size = 12
+  ) +
+    theme(
+      panel.grid = element_blank(),
+      strip.text = element_text(margin = margin(4, 4, 4, 4, "pt")),
+      axis.text = element_text(size = rel(0.7)),
+      axis.ticks = element_line(size = rel(0.2))
+    )
+)
+```
+
+```{r functions}
+# Function to replace extreme percentages
+percent2 <- function(x, accuracy = .1) {
+  x <- percent(x, accuracy = accuracy)
+  x <- if_else(x == "100.0%", ">99.9%", x)
+  x <- if_else(x == "0.0%", "<0.1%", x)
+  x
+}
+```
+
+## Gallup world poll
+
+### Codebook
+
+```{r gallup-codebook}
+# Understand variables & values
+# Codes NOTE 1: yes 2: no!
+read_spss(
+  "data-raw/Gallup/World_Poll_Methodology and Guides_101521/The_Gallup_042722.sav",
+  n_max = 1,
+  col_select = c(
+    WPID, WP1219,
+    WP16,
+    WP60, WP61, WP63, WP65, WP67,
+    WP68, WP69, WP70, WP71, WP74
+  )
+) |>
+  generate_dictionary() |>
+  select(-pos, -col_type, -missing) |>
+  lookfor_to_long_format() |> 
+  select(-levels)
+```
+
+
+```{r gallup-spss-to-rds}
+gwp_path <- "data-raw/Gallup/gwp-processed.rds"
+if (!file.exists(gwp_path)) {
+  gwp <- read_spss(
+    "data-raw/Gallup/World_Poll_Methodology and Guides_101521/The_Gallup_042722.sav",
+    col_select = c(
+      YEAR_CALENDAR,
+      COUNTRYNEW,
+      WPID, WP1220, WP1219,
+      WP16,
+      WP60, WP61, WP63, WP65, WP67,
+      WP68, WP69, WP70, WP71, WP74
+    )
+  )
+  # Get rid of SPSS attributes
+  gwp <- gwp |>
+    zap_labels() |>
+    zap_label() |>
+    zap_widths() |>
+    zap_formats()
+  # Save into a good format
+  write_rds(gwp, gwp_path)
+} else {
+  gwp <- read_rds(gwp_path)
+}
+```
+
+
+```{r gallup-rename-recode}
+# Rename and recode variables
+gwp <- gwp |>
+  clean_names() |>
+  transmute(
+    country = countrynew,
+    year = year_calendar,
+    id = wpid,
+    sex = factor(wp1219, levels = c(2, 1), labels = c("Female", "Male")),
+    age = wp1220,
+    # Don't know, refused, and missing values
+    Life_satisfaction = if_else(between(wp16, 0, 10), wp16, NaN),
+    across(wp60:wp74, ~ if_else(between(., 1, 2), ., NaN)),
+    # Also reverse the weird 1: yes 2: no coding here
+    across(wp60:wp74, ~ 3 - .)
+  )
+gwp
+```
+
+```{r gallup-demographics}
+# Categorize ages
+gwp <- filter(gwp, between(age, 15, 89))
+gwp <- gwp |>
+  mutate(
+    age = cut(
+      age,
+      breaks = seq(15, 90, by = 5),
+      include.lowest = TRUE,
+      right = FALSE,
+      labels = paste(seq(15, 85, by = 5), "to", seq(19, 89, by = 5))
+    ) |> as.character()
+  )
+
+# Some sex values are missing, drop those
+gwp <- drop_na(gwp, sex)
+
+# Summarise cells
+gwp |> 
+  count(year, country, sex, age) |> 
+  ggplot(aes(age, n)) +
+  scale_y_log10() +
+  geom_boxplot()
+```
+
+```{r gallup-scale-scoring}
+# Scale scores note rescaling to percentages
+gwp <- gwp |>
+  mutate(
+    Life_satisfaction = Life_satisfaction * 10,
+    Negative_experiences =
+      (rowMeans(select(gwp, wp68:wp74), na.rm = TRUE) - 1) * 100,
+    Positive_experiences =
+      (rowMeans(select(gwp, wp60:wp67), na.rm = TRUE) - 1) * 100
+  ) |>
+  select(-c(wp60:wp74))
+saveRDS(gwp, "data-raw/gwp-raw.rds")
+```
+
+```{r gallup-aggregate}
+# Pivot outcomes to long format
+gwp <- gwp |>
+  pivot_longer(
+    c(
+      Life_satisfaction,
+      Negative_experiences,
+      Positive_experiences
+    ),
+    names_to = "outcome", values_to = "val"
+  )
+
+# Aggregate outcomes
+gwp <- gwp |>
+  summarise(
+    n = n(),
+    sd = sd(val, na.rm = TRUE),
+    val = mean(val, na.rm = TRUE),
+    .by = c(country, year, sex, age, outcome)
+  )
+gwp <- gwp |> 
+  mutate(
+    # Fix N=1 and SD=0 cells
+    sd = if_else(n == 1 | sd == 0, median(sd), sd),
+    se = sd / sqrt(n),
+  )
+```
+
+```{r gallup-harmonize}
+# Harmonise old names and replace only if harmonised name found
+gwp <- gwp |>
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) |>
+  # This picks the harmonised name if exists, otherwise original name
+  # Prevent north cyprus from becoming cyprus
+  mutate(
+    country_harmonised = ifelse(
+      country == "Northern Cyprus",
+      "Northern Cyprus",
+      country_harmonised
+    )
+  ) |>
+  mutate(country = coalesce(country_harmonised, country)) |>
+  select(-country_harmonised)
+```
+
+
+```{r gallup-mock-data}
+gwp_mock_path <- "data-raw/gwp-MOCK.rds"
+if (dir.exists("data-raw/Gallup") & !file.exists(gwp_mock_path)) {
+  library(synthpop)
+  gwp_syn <- gwp |>
+    drop_na()
+  gwp_syn <- syn(
+    gwp_syn,
+    method = c("", "", "", "", "", "", "normrank", "normrank"),
+    maxfaclevels = 168
+  )
+  gwp_syn <- tibble(gwp_syn$syn)
+  saveRDS(gwp_syn, gwp_mock_path)
+}
+```
+
+Check if synthetic data is used
+
+```{r gallup-mock-data-check}
+# Load if actual data doesn't exist
+if (!dir.exists("data-raw/Gallup")) {
+  cat("Using synthetic GWP data.")
+  gwp <- read_rds(gwp_mock_path)
+} else {
+  cat("Using actual GWP data.")
+}
+```
+
+Save data for analysis
+
+```{r gallup-save}
+saveRDS(gwp, "data/gwp.rds")
+```
+
+
+## Global Burden of Disease
+
+```{r gbd-process}
+# Load GBD data files and merge to one table
+gbd <- list.files(
+  "data-raw/GBD/",
+  pattern = ".zip", full.names = TRUE, recursive = TRUE
+) |>
+  read_csv()
+
+# First step is to clean names and remove unnecessary variables
+gbd <- clean_names(gbd)
+# distinct(gbd, measure, metric)
+gbd <- select(gbd, -measure, -metric)
+
+# Limit to same upper age as GWP
+# gbd <- filter(gbd, !(age %in% c("80 to 84", "85 to 89")))
+
+# Rates to percentages
+gbd <- gbd |>
+  mutate(across(c(val, upper, lower), ~ .x / 1000))
+
+# Clean cause names
+# distinct(gbd, cause)
+gbd <- gbd |>
+  mutate(
+    cause = case_when(
+      cause == "Anxiety disorders" ~ "Anxiety",
+      cause == "Depressive disorders" ~ "Depression",
+      cause == "Self-harm" ~ "Selfharm"
+    )
+  )
+
+# Harmonise variable names with other datasets
+gbd <- gbd |>
+  rename(country = location, outcome = cause)
+
+# The outcomes values are model predictions and come with lower and upper CI limits (2.5 and 97.5 %iles of their posterior distributions). We convert those to normal approximate standard errors.
+gbd <- gbd |>
+  mutate(se = (upper - lower) / (1.96 * 2)) |>
+  select(-c(upper, lower))
+
+# Harmonise old names and replace only if harmonised name found
+gbd <- gbd |>
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) |>
+  # This picks the harmonised name if exists, otherwise original name
+  mutate(country = coalesce(country_harmonised, country)) |>
+  select(-country_harmonised)
+```
+
+Save data for analyses
+
+```{r gbd-save}
+saveRDS(gbd, "data/gbd.rds")
+```
+
+## ITU
+
+```{r itu-download}
+# Download data sets from the ITU website if not yet downloaded
+if (!dir.exists("data-raw/ITU")) {
+  dir.create("data-raw/ITU")
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2022/December/PercentIndividualsUsingInternet.xlsx",
+    "data-raw/ITU/per-capita-internet.xlsx"
+  )
+  download.file(
+    "https://www.itu.int/en/ITU-D/Statistics/Documents/statistics/2022/December/MobileBroadbandSubscriptions_2007-2021.xlsx",
+    "data-raw/ITU/per-capita-mobile.xlsx"
+  )
+}
+```
+
+
+```{r itu-merge}
+# Percent using internet
+itu_percent <- read_xlsx(
+  "data-raw/ITU/per-capita-internet.xlsx",
+  col_types = "text"
+) |>
+  pivot_longer(-c(Indicator, Economy)) |>
+  separate(name, into = c("year", "variable")) |>
+  pivot_wider(names_from = variable) |>
+  mutate(internet = as.numeric(value)) |>
+  select(country = Economy, year, internet)
+
+# Read and reshape mobile broadband data
+itu_mobile <- read_xlsx(
+  "data-raw/ITU/per-capita-mobile.xlsx",
+  sheet = 2,
+  col_types = "text"
+) |>
+  pivot_longer(-c(Indicator, Economy)) |>
+  separate(name, into = c("year", "variable")) |>
+  pivot_wider(names_from = variable) |>
+  mutate(mobile = as.numeric(value)) |>
+  select(country = Economy, year, mobile)
+
+
+# Merge to one table in wide format (oldest on left to include all years)
+itu <- left_join(itu_percent, itu_mobile)
+rm(itu_percent, itu_mobile)
+```
+
+
+```{r itu-clean}
+# years to numbers
+itu <- itu |>
+  mutate(year = as.numeric(year))
+
+# Harmonise old names and replace only if harmonised name found
+itu <- itu |>
+  mutate(
+    country_harmonised = countryname(
+      country,
+      destination = "cldr.short.en"
+    )
+  ) |>
+  # This picks the harmonised name if exists, otherwise original name
+  mutate(country = coalesce(country_harmonised, country)) |>
+  select(-country_harmonised)
+
+# Drop countries that don't exist in outcomes
+itu <- itu |>
+  filter(
+    country %in% unique(gbd$country) | country %in% unique(gwp$country)
+  )
+
+# Drop countries that don't have any actual internet data
+itu_zeros <- itu |>
+  summarise(s = sum(internet, na.rm = TRUE), .by = country) |>
+  filter(s == 0)
+
+itu <- itu |>
+  filter(!(country %in% itu_zeros$country))
+rm(itu_zeros)
+```
+
+Save data for analyses
+
+```{r itu-save}
+saveRDS(itu, "data/itu.rds")
+```
+
+## Merge
+
+```{r merge}
+# Stack outcome data
+dat <- bind_rows(gwp, gbd)
+
+# Merge predictors to outcomes
+dat <- left_join(dat, itu)
+
+# Center year
+dat <- dat |>
+  mutate(year = (year - 2010))
+
+# Ensure that categorical variables are factors
+dat <- dat |>
+  mutate(across(c(sex, age, country, outcome), factor))
+
+# Arrange on outcome
+oo <- c(
+  "Life_satisfaction", "Negative_experiences", "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+dat <- dat |>
+  mutate(outcome = factor(outcome, levels = oo)) |>
+  arrange(outcome, country, year)
+
+# Save data for models
+saveRDS(dat, "data/data-all.rds")
+```
+
+```{r data-describe}
+library(scales)
+gwp |> 
+  group_by(outcome) |> 
+  summarise(n=sum(n)) |> 
+  summarise(N=comma(median(n))) |> 
+  pull(N)
+
+bind_rows(
+  "GWP" = gwp,
+  "GBD" = gbd,
+  .id = "Dataset"
+) |> 
+  mutate(Dataset = fct_inorder(Dataset)) |> 
+  count(Dataset, outcome) |> 
+  bind_rows(
+    itu |> 
+      select(internet, mobile) |> 
+      pivot_longer(everything(), names_to = "outcome") |> 
+      drop_na(value) |> 
+      count(outcome) |> 
+      mutate(Dataset = "ITU")
+  )
+
+# Individuals using the internet per 100 inhabitants | World
+if (!file.exists(
+  "data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx")) {
+  download.file("https://www.itu.int/en/ITU-D/Statistics/Documents/facts/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", "data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx")
+}
+read_excel("data-raw/ITU/ITU_regional_global_Key_ICT_indicator_aggregates_rev1_Jan_2022.xlsx", range = "T85:AI86")
+```
+
+## Scaling factors
+
+```{r scaling-factors}
+# Table for scaling coefficients
+z <- dat |> 
+  summarise(
+    val_sd = sd(val, na.rm = TRUE),
+    val_mean = mean(val, na.rm = TRUE),
+    .by = outcome
+  ) |> 
+  bind_cols(
+    itu |> 
+      mutate(year = year - 2010) %>% 
+      summarise(
+        Year = 1,
+        Internet = coef(lm(internet ~ year, data = .))[2],
+        Mobile = coef(lm(mobile ~ year, data = .))[2]
+      )
+  )
+z <- z |> 
+  pivot_longer(c(Year, Internet, Mobile), names_to = "predictor", values_to = "xdev") |> 
+  mutate(
+    predictor = factor(
+      predictor, 
+      levels = c("Year", "Internet", "Mobile"), 
+      labels = c("Year", "Internet", "Mobile")
+    )
+  )
+
+z <- z |> 
+  mutate(zfactor = xdev/val_sd)
+write_rds(z, "data/scaling-factors.rds")
+```
+
+# Models
+
+## Tests
+
+```{r}
+options(mc.cores = 4, brms.backend = "cmdstanr")
+z <- read_rds("data/scaling-factors.rds")
+options(contrasts = c(unordered = "contr.sum", ordered = "contr.poly"))
+```
+
+### Modelling aggregate data
+
+Our main analyses model aggregated country-year-demographic level data. Here we verify that we get the correct brms syntax for such a model.
+
+```{r}
+dat <- read_rds("data-raw/gwp-raw.rds") |> 
+  filter(
+    country == "United States", 
+    sex == "Female", 
+    age == "30 to 34"
+  ) |> 
+  mutate(year = year - min(year)) |> 
+  rename(val = Life_satisfaction)
+dat_sum <- dat |> 
+  summarise(
+    n = sum(!is.na(val)),
+    sd = sd(val, na.rm = TRUE),
+    se = sd / sqrt(n),
+    val = mean(val, na.rm = TRUE),
+    .by = c(year, country)
+  )
+```
+
+
+```{r brms-syntax}
+# Raw data
+f1 <- brm(
+  val ~ year,
+  data = dat,
+  iter = 10000,
+  control = list(adapt_delta = .99),
+  file = "cache/test-brm-1"
+)
+
+f2 <- brm(
+  val | se(se, sigma = FALSE) ~ year,
+  data = dat_sum,
+  iter = 10000,
+  control = list(adapt_delta = .99),
+  file = "cache/test-brm-2"
+)
+
+f3 <- brm(
+  val | se(se, sigma = TRUE) ~ year,
+  data = dat_sum,
+  iter = 10000,
+  control = list(adapt_delta = .99),
+  file = "cache/test-brm-3"
+)
+```
+
+Compare estimates
+
+```{r brms-syntax-figure}
+list(f1, f2, f3) |> 
+  map(
+    ~as_draws_df(., variable = c("b_", "sigma"), regex = TRUE) |> 
+      pivot_longer(
+        c("b_Intercept", "b_year", "sigma"), 
+        names_to = "variable", values_to = "value"
+      )
+  ) |> 
+  bind_rows(.id = "Model") |> 
+  ggplot(aes(value, variable, col = Model, fill = Model)) +
+  scale_color_brewer(
+    "Model",
+    palette = "Set1",
+    labels = map(list(f1, f2, f3), ~.$formula[1]),
+    aesthetics = c("color", "fill")
+  ) +
+  stat_slabinterval(
+    position = position_dodgejust(),
+    slab_alpha = .33,
+    normalize = "panels"
+  ) +
+  guides(
+    color = guide_legend(reverse = TRUE),
+    fill = guide_legend(reverse = TRUE)
+  ) +
+  facet_wrap("variable", scales = "free", ncol = 1)
+```
+
+So we see that brms expects to be passed the standard error and no additional residual deviation. We are also not able to get models to converge with the additional deviation.
+
+### Post-hoc standardizing
+
+Our primary inference concerns raw regression coefficients which are directly interpretable on the percentage / percentage scales. We also post-hoc standardize these, and here confirm their equivalence (in simple regressions).
+
+```{r post-hoc-stdz}
+library(broom)
+# Raw model fit
+fit_raw <- lm(mpg ~ drat, data = mtcars)
+
+# Standardized model fit
+fit_scaled <- lm(scale(mpg) ~ scale(drat), data = mtcars)
+
+# Correspondence: Multiply raw slope with ratio of sd(x) / sd(y)
+x_sd <- sd(mtcars$drat)
+y_sd <- sd(mtcars$mpg)
+near(
+  coef(fit_scaled)[2], 
+  coef(fit_raw)[2] * (x_sd / y_sd), .00001
+)
+```
+
+
+
+## Diagnostics
+
+```{r models-load}
+#| cache: false
+
+# Create a table of outcomes in appropriate order, so can map functions over this
+oo <- c(
+  "Life_satisfaction", 
+  "Negative_experiences", 
+  "Positive_experiences",
+  "Anxiety", "Depression", "Selfharm"
+)
+
+fits <- tibble(
+  path = list.files("models", pattern = "brm-", full.names = TRUE)
+) |>
+  mutate(fit = map(path, readRDS)) |>
+  mutate(path = basename(path)) |>
+  separate(path, c("discard", "outcome", "model"), sep = "-") |>
+  mutate(
+    x = factor(str_extract(model, "[0-9]"), labels = c("year", "i_cw", "m_cw")),
+    predictor = factor(x, labels = c("Year", "Internet", "Mobile"))
+  ) |>
+  select(outcome, x, predictor, fit) |>
+  mutate(outcome = factor(outcome, levels = oo)) |>
+  arrange(outcome, x)
+
+fits <- fits |> 
+  left_join(z)
+```
+
+### Rhats
+
+Show all suspicious rhats
+
+```{r rhats}
+fits |>
+  select(predictor, outcome, fit) |> 
+  mutate(
+    out = map(
+      fit,
+      ~as_draws_df(.x, variable = c("b_", "sd_", "cor_"), regex = TRUE) |> 
+        summarise_draws(rhat)
+    )
+  ) |>
+  select(-fit) |>
+  unnest(out) |> 
+  filter(!near(rhat, 1, tol = .025)) |> 
+  arrange(predictor, outcome, rhat) |> 
+  gt()
+```
+
+
+### Traceplots
+
+```{r traceplots}
+#| fig.height: 6
+#| fig.width: 8
+#| fig.dpi: 72
+#| column: page
+#| panel: tabset
+#| output: asis
+
+traceplot <- function(fit, outcome, predictor) {
+  fit |> 
+    as_draws_df(variable = c("b_", "sd_"), regex = TRUE) |> 
+    pivot_longer(contains("_")) |> 
+    ggplot(aes(.iteration, value, col = factor(.chain))) +
+    scale_color_brewer(palette = "Set1") +
+    labs(caption = str_replace(fit$formula[1], 'val', as.character(outcome))) +
+    geom_line(linewidth = .33, alpha = .5) +
+    facet_wrap("name", scales = "free_y", ncol = 3) +
+    theme(
+      legend.position = "none"
+    )
+}
+
+if (FALSE) {
+  for (i in 1:18) {
+    cat(str_glue("\n## {fits$outcome[[i]]} ~ {fits$predictor[[i]]}\n\n"))
+    print(traceplot(fits$fit[[i]], fits$outcome[[i]], fits$predictor[[i]]))
+    cat("\n\n")
+  }
+}
+```
+
+## Model output
+
+```{r process-models}
+# Functions to obtain quantities of interest
+summary_function <- function(samples, zfactor) {
+  samples %>%
+    summarize_draws(
+      mean, 
+      sd,
+      ~quantile2(.x, probs = c(0.025, 0.975)),
+      pd = ~pd(as.numeric(.x)),
+      zmean = ~mean(.x * zfactor),
+      zsd = ~sd(.x * zfactor),
+      z = ~quantile2(
+        .x * zfactor, probs = c(0.025, 0.975)
+      ) %>% 
+        setNames(., c("zq2.5", "zq97.5")),
+      rope = ~rope(
+        as.numeric(.x * zfactor), rope_ci = 1, rope_range = c(-0.1, 0.1)
+      )$ROPE_Percentage
+    )
+}
+
+hypothesis_function <- function(model, variable, zfactor) {
+  
+  hypotheses <- c(
+    average = str_glue("{variable} = 0"),
+    female = str_glue("{variable} + {variable}:sex1 * 1 = 0"),
+    male = str_glue("{variable} + {variable}:sex1 * -1 = 0"),
+    `female-male` = str_glue("{variable} + {variable}:sex1 * 1 = {variable} + {variable}:sex1 * -1")
+  )
+  
+  average <- hypothesis(model, hypotheses)
+  names(average$samples) <- str_glue("{average$hypothesis$Hypothesis}_Average")
+  
+  country <- hypothesis(model, hypotheses, scope = "coef", group = "country")
+  names(country$samples) <- str_glue("{country$hypothesis$Hypothesis}_{country$hypothesis$Group}")
+  
+  age <- hypothesis(model, hypotheses, scope = "coef", group = "age")
+  names(age$samples) <- str_glue("{age$hypothesis$Hypothesis}_{age$hypothesis$Group}")
+  
+  xcb <- str_replace(variable, 'cw', 'cb')
+  xcb_h <- c(cb = str_glue("{xcb} = 0"))
+  cb <- hypothesis(model, xcb_h)
+  names(cb$samples) <- str_glue("{cb$hypothesis$Hypothesis}_Average")
+  
+  list(average$samples, country$samples, age$samples, cb$samples) %>% 
+    setNames(c("average", "country", "age", "cb")) %>%
+    map(~summary_function(.x, zfactor)) %>%
+    bind_rows(.id = "level")
+}
+
+path <- "cache/coefficients.rds"
+if (!file.exists(path)) {
+  coefficients <- fits |> 
+    mutate(
+      coef = pmap(
+        list(model = fit, variable = x, zfactor = zfactor),
+        ~hypothesis_function(..1, ..2, ..3)
+      )
+    ) |> 
+    select(outcome, predictor, coef) |> 
+    unnest(coef)
+  
+  coefficients <- separate(coefficients, variable, c("sex", "group"), sep = "_")
+  
+  # Create pretty strings with lots of digits for MH outcomes
+  coefficients <- coefficients |> 
+    mutate(
+      digits = if_else(outcome %in% oo[1:3], .01, .0001)
+    ) |> 
+    mutate(
+      Raw = str_glue(
+        "{number(mean, digits)} [{number(q2.5, digits)}, ",
+        "{number(q97.5, digits)}] ({percent2(pd, .1)})"
+      ),
+      Scaled = str_glue(
+        "{number(zmean, digits)} [{number(zq2.5, digits)}, ",
+        "{number(zq97.5, digits)}] ({percent2(rope, .1)})"
+      )
+    )
+  
+  coefficients <- coefficients |> 
+    arrange(predictor, outcome) |> 
+    select(predictor, everything())
+  
+  write_rds(coefficients, path)
+} else {coefficients <- read_rds(path)}
+
+path <- "cache/epred.rds"
+if (!file.exists(path)) {
+  epred <- fits |> 
+    mutate(
+      pdata = map2(
+        fit, x, 
+        ~conditional_effects(
+          .x, .y, conditions = tibble(sex = NA), robust = FALSE
+          )[[1]]
+      )
+    ) |> 
+    select(-fit)
+  write_rds(epred, path)
+} else {epred <- read_rds(path)}
+```
+
+
+# Inference
+
+```{r}
+z <- read_rds("data/scaling-factors.rds")
+coefficients <- read_rds("cache/coefficients.rds")
+```
+
+## Parameter scaling
+
+```{r}
+tmp <- coefficients |> 
+  filter(
+    outcome == "Life_satisfaction",
+    predictor == "Internet",
+    level == "average",
+    sex == "average"
+    ) |> 
+  left_join(z)
+```
+
+In the manuscript, we describe magnitudes of the estimated associations on two scales. The raw scale describes changes in the outcome percentage as a function of one percent change in the predictor. To provide additional context to those raw associations, we also describe our results in standardized terms. This standard scale is in units of the grand average year-on-year change (YoY) in the predictor and standardized outcomes. In words, this scale describes changes in the outcome, in standard deviations, as function of an average year-on-year change in the predictor. Thus, we transform raw coefficients to standardized coefficients with $\beta_{\text{scaled}} = \beta_{\text{raw}}(\frac{\text{YoY}_x}{\sigma_y})$. For example, the YoY for per capita internet adoption is `r number(tmp$xdev, .1)`%, and the standard deviation of life satisfaction across countries, years, and demographics is `r number(tmp$val_sd, .1)`%. The raw association between the percentages is approximately `r number(tmp$mean, .1)`. Thus the scaled association is `r number(tmp$mean, .1)` * (`r number(tmp$xdev, .1)` / `r number(tmp$val_sd, .1)`) = `r number(tmp$zmean, .1)`.
+
+## Probabilistic inference
+
+In this work, we eschew null hypothesis significance testing in favor of two alternative bayesian methods of determining whether a parameter is considered credibly different from zero. First, we focus on posterior probabilities of direction ($p^d$). Although numerically identical to a one sided *p*-value [@marsmanThreeInsightsBayesian2016], $p^d$ describes the degree of confidence, as a percentage, that the estimated effect is in the observed direction. Figure \@ref(fig:fig-pd)A illustrates the posterior probability distribution of the average country's association between internet adoption and life satisfaction in raw percentage on percentage units. The dark shaded area indicates $p^d$; the proportion of this area under the curve that is above zero. In other words, given our modelling assumptions, per capita internet adoption predicts life satisfaction positively with a 78.9% probability.
+
+While $p^d$ does not depend on how the predictors or outcomes are scaled, our second inference metric does. To assess whether parameters are credibly greater than some smallest effect size of interest (e.g. @anvariUsingAnchorbasedMethods2021), we define a region of practical equivalence (ROPE) to zero [@kruschkeDoingBayesianData2014] as [-0.1, 0.1] on the standardized scale. 
+
+```{r fig-pd}
+#| fig.cap: Panel **A**. Posterior distribution of the parameter describing the association between per capita internet adoption and life satisfaction. Units indicate differences in life satisfaction percentage as function of one percent change in per capita internet adoption. The x-axis on the top of the figure converts this raw coefficient value to the scaled metric. The point and interval in the bottom of the figure indicates the posterior mean and 95\%CI limits, the latter also shown numerically. Shaded blue area indicates $p^d$; the posterior probability that the association is positive. **B**. As A. but in the standardized metric; units indicate z-score changes in life satisfaction as function of an average year-on-year change in per capita internet adoption. Shaded green area indicates $p^{\text{ROPE}}$; posterior probability that the coefficient is within ROPE. In this example, virtually the entire distribution is within ROPE.
+#| fig.height: 3.4
+#| fig.width: 8
+#| include: true
+
+tmp <- tmp |> 
+  mutate(
+    d = dist_normal(mean, sd),
+    pd = (1 - cdf(d, 0)) |> percent(.1),
+    ds = dist_normal(0.07 * zfactor, 0.087 * zfactor),
+    prope = percent(cdf(ds, 0.1) - cdf(ds, -0.1), .1)
+  )
+
+p1 <- tmp |>   
+  ggplot() +
+  coord_cartesian(xlim = c(-0.1/tmp$zfactor, 0.1/tmp$zfactor)) +
+  aes(xdist = d, slab_fill = after_stat(x > 0)) +
+  scale_fill_brewer(
+    TeX(r'($p^d$)'),
+    aesthetics = "slab_fill",
+    breaks = TRUE,
+    labels = c(tmp$pd),
+    palette = "Pastel1"
+  ) +
+  scale_y_discrete(
+    "Density",
+    expand = expansion(c(0, .025))
+  ) +
+  stat_slabinterval(
+    .width = .95,
+    p_limits = c(.0001, .9999),
+    slab_color = "grey40",
+    slab_linewidth = .33
+  ) +
+  stat_interval(
+    .width = .95,
+    geom = "text",
+    aes(
+      label = number(after_stat(xmax), .01),
+      x = after_stat(xmax)
+    ),
+    y = -Inf, 
+    vjust = -1,
+    show.legend = FALSE
+  ) +
+  stat_interval(
+    .width = .95,
+    geom = "text",
+    aes(
+      label = number(after_stat(xmin), .01),
+      x = after_stat(xmin)
+    ),
+    y = -Inf, 
+    vjust = -1,
+    show.legend = FALSE
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+p2 <- p1 + 
+  coord_cartesian(xlim = c(-0.1, 0.1)) +
+  geom_vline(
+    xintercept = c(-0.1, 0.1),
+    linewidth = .33, 
+    linetype = "dashed"
+  ) +
+  aes(xdist = ds, slab_fill = after_stat(between(x, -0.1, 0.1))) +
+  scale_fill_brewer(
+    TeX(r'($p^{rope}$)'),
+    aesthetics = "slab_fill",
+    breaks = TRUE,
+    labels = c(tmp$prope),
+    palette = "Accent"
+  ) +
+  scale_x_continuous(
+    "Scaled association",
+    sec.axis = sec_axis(~ . / tmp$zfactor, name = "Raw association")
+  )
+p1 <- p1 +
+  scale_x_continuous(
+    "Raw association",
+    sec.axis = sec_axis(~ . * tmp$zfactor, name = "Scaled association")
+  )
+(p1 | p2) &
+  theme(legend.position = c(0.8, 0.75)) &
+  plot_annotation(tag_levels = "A")
+```
+
+Because there is a paucity of critical theory to guide smallest effect sizes of interest, or ROPEs, on the raw scales, we define our ROPE as [-0.1, .1] on this standardized scale (see e.g. @fergusonProvidingLowerboundEstimate2021). Then using this ROPE, our second inference metric is the probability that the coefficient is in the region of practical equivalence to zero ($p^{\text{ROPE}}$). We consider this a quantification of credibility in the proposition that the coefficient of interest is not meaningfully large; that it is credibly equivalent to zero. 
+
+On this standardized scale, the 95%CI of the association between per capita internet adoption and life satisfaction ranges from -0.02 to 0.05. Figure \@ref(fig:fig-pd)B illustrates this posterior distribution in context of the ROPE: While the point estimate is positive, and $p^d$ = 78.9%, $p^{\text{ROPE}}$ = 100% and we are then very confident that the association is equivalent to zero; that it is not meaningfully large.
+
+# Country-specific parameters
+
+```{r}
+#| label: tbl-countries
+#| tbl-cap: Country-specific parameters for the average age and sex
+
+coefficients |>
+  filter(outcome == "Life_satisfaction", level == "country", sex == "average") |> 
+  select(outcome, predictor, country = group, Raw, Scaled) |> 
+  rename_with(~str_to_sentence(.)) |>
+  mutate(Outcome = str_replace(Outcome, "_", " ")) |> 
+  arrange(Outcome, Predictor, Country) |> 
+  gt() |> 
+  cols_align("left") |> 
+  tab_style(
+    style = cell_text(size = "x-small"),
+    locations = cells_body()
+  ) |> 
+  opt_stylize(3) |> 
+  tab_options(container.height = "400px")
+```
+
+# References
+
