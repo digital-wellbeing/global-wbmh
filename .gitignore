@@ -16,6 +16,7 @@ diagnostics/
 *.pdf
 *.html
 *.docx
+!README.docx
 *.tex
 *cache/
 *_files/
