@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: Code supplement to "Global well-being and mental health in the internet age"
+version: 2.2.2
+license: CC-BY-4.0
+type: software
+abstract: Code supporting the manuscript.
+message: "Please cite as indicated."
+authors:
+  - family-names: Vuorre
+    given-names: Matti
+    orcid: https://orcid.org/0000-0001-5052-066X
+    affiliation: Tilburg University
+  - family-names: Przybylski
+    given-names: Andrew
+    orcid: https://orcid.org/0000-0001-5547-2185
+    affiliation: University of Oxford
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.7004053
+keywords:
+  - psychology

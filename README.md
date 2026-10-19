@@ -8,7 +8,7 @@ This repository contains the code and synthetic datasets required to reproduce a
   - A publicly available version of our manuscript in advance of peer-review and formal publication
 - [GitHub repository](https://github.com/digital-wellbeing/global-wbmh)  
   - A version controlled repository containing all the raw data and code in this project
-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7004054.svg)](https://doi.org/10.5281/zenodo.7004054)
+- <https://doi.org/10.5281/zenodo.7004053>
   - An archived permanent copy of the GitHub repository
 
 ## Reproducibility
